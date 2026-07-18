@@ -1,0 +1,67 @@
+{
+  "name": "@anvilnote/ai-writer",
+  "version": "0.1.0",
+  "description": "Provider-neutral, structured AI writing contracts and orchestration for AnvilNote.",
+  "license": "MIT",
+  "private": true,
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts/index.d.ts",
+      "require": "./dist/contracts/index.js",
+      "default": "./dist/contracts/index.js"
+    },
+    "./document": {
+      "types": "./dist/document/index.d.ts",
+      "require": "./dist/document/index.js",
+      "default": "./dist/document/index.js"
+    },
+    "./pricing": {
+      "types": "./dist/pricing/index.d.ts",
+      "require": "./dist/pricing/index.js",
+      "default": "./dist/pricing/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "require": "./dist/server/index.js",
+      "default": "./dist/server/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "test": "node --import tsx --test tests/*/*.test.ts",
+    "test:dist": "node --test tests-dist/*.test.mjs",
+    "lint": "eslint .",
+    "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm clean && pnpm build && pnpm test:dist"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.0.1",
+    "@typescript-eslint/eslint-plugin": "^8.62.0",
+    "@typescript-eslint/parser": "^8.62.0",
+    "eslint": "^10.5.0",
+    "prettier": "^3.8.4",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}

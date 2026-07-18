@@ -1,0 +1,23 @@
+{
+  "version": "2026-07-18",
+  "currency": "USD",
+  "source": "https://developers.openai.com/api/docs/models",
+  "providers": {
+    "openai": {
+      "models": {
+        "gpt-5.6-sol": {
+          "inputPerMillionTokens": 5,
+          "outputPerMillionTokens": 30
+        },
+        "gpt-5.6-terra": {
+          "inputPerMillionTokens": 2.5,
+          "outputPerMillionTokens": 15
+        },
+        "gpt-5.6-luna": {
+          "inputPerMillionTokens": 1,
+          "outputPerMillionTokens": 6
+        }
+      }
+    }
+  }
+}
