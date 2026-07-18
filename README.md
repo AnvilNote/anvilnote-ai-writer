@@ -6,8 +6,9 @@ Mode.
 
 Browser-safe consumers use `contracts`, `document`, and `pricing`. Trusted Node
 runtimes use `server` for prompt loading, profile selection, language/style
-routing, and prepared writer requests. Phase 2 does not install a provider SDK
-or call OpenAI.
+routing, prepared writer requests, and provider execution. The official OpenAI
+SDK is reachable only through the `server` export; Phase 3 does not yet connect
+this package to AnvilNote API, Desktop, or Web.
 
 ## Writing configuration
 
@@ -29,8 +30,9 @@ policy IDs together with their versions. Result validation rejects metadata
 that does not match the result kind or selected v1 profile. Policy metadata is
 limited to the registered v1 policies and must include factual integrity,
 protected content, and exactly one resolved style; Humanizer is optional but
-cannot be stacked. The future provider payload will contain model-authored
-fields only; orchestration, not the model, adds execution metadata and usage.
+cannot be stacked. The provider payload contains model-authored fields only;
+trusted orchestration, not the model, adds execution metadata, provider usage,
+and pricing.
 
 `auto` writing style resolves academic, legal, technical, and reference
 documents to neutral; handouts and notes to restrained natural; blogs and
@@ -54,14 +56,65 @@ not import Node filesystem/path modules or embed prompt text.
 
 ## Protected-content integration boundary
 
-Phase 2 applies the protected-content policy but deliberately does not rewrite
+Prompt preparation applies the protected-content policy but deliberately does not rewrite
 typed AST nodes into placeholders. Math, code, and safe links remain structured
 AST data. During the later Web converter phase, Tiptap content that cannot be
 safely model-edited will either be represented by the browser-safe,
 request-scoped `ProtectedContentRegistry` or block submission with a specific
 unsupported-selection error. The registry validates exact placeholder counts
-before restoration and fails closed. No converter may silently discard an
+across structured output before exact restoration and fails closed. Provider
+execution accepts that request-scoped registry without persisting it. No
+converter may silently discard an
 unknown node, mark, or attribute.
+
+## OpenAI provider
+
+Phase 3 uses `openai@6.48.0`, the Responses API, and the SDK's Zod 4-compatible
+`zodTextFormat()` helper. Requests set `store: false`, `background: false`, no
+conversation/previous response, and an empty tools list. Writer requests use a
+central low reasoning effort; the minimal connection test uses `none`.
+
+The OpenAI wire schema is intentionally separate from the domain AST schema.
+Strict Structured Outputs requires every object property to be required, so
+optional AST fields use required nullable values on the wire. After parsing,
+null optional properties are removed and the result is validated again through
+the provider-neutral AnvilNote AST and semantic validators. A static schema
+check enforces an object root, complete `required` lists,
+`additionalProperties: false`, an explicit supported-keyword allowlist, and
+documented property/nesting limits. SDK-emitted draft metadata and unsupported
+string-length keywords are omitted from the provider schema; the unchanged Zod
+parser still enforces those local limits after parsing. Recursive `$ref` remains
+enabled because the current Structured Outputs subset supports recursion.
+
+The provider abstraction carries a provider-neutral model payload; OpenAI owns
+only its wire schema and conversion. The model authors only compose/rewrite
+content fields. Trusted orchestration
+adds profile, prompt, policy, provider/model, usage, and pricing metadata.
+Refusal, incomplete output, malformed JSON, missing parsed output, unknown
+nodes, unsafe links, and protected-placeholder violations all fail closed.
+
+The SDK client is short-lived, receives the BYOK credential as a separate
+trusted argument, and disables SDK retries. AnvilNote permits at most one retry
+for rate limiting, transient network/timeout failures, or invalid structured
+output; it respects Retry-After and cancellation during backoff. Connection
+tests do not retry. Caller cancellation and the overall request deadline share
+one request-scoped signal, and late responses are discarded.
+
+If a retry follows an invalid output, network failure, or timeout, aggregate
+usage cannot be proven from all potentially billable attempts. The returned
+usage and cost are therefore unknown rather than reporting only the final
+attempt and understating charges.
+
+Responses usage is normalized without inventing missing counts. Cached input
+is removed from ordinary input before applying its lower cached rate, while
+reasoning tokens remain a subset of output usage rather than a second output
+charge. If the provider reports cache-write tokens, pricing fails closed until
+that separate billing tier is represented by the public usage contract.
+Standard pricing also fails closed above 272,000 input tokens because the
+provider applies a long-context multiplier beyond that threshold.
+
+All automated provider tests use injected fake clients. They never read
+`OPENAI_API_KEY` and never call a paid API.
 
 To add a policy:
 
