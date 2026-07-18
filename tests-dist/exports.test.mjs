@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -16,17 +17,40 @@ const publicSpecifiers = [
   "@anvilnote/ai-writer/server",
 ];
 
-async function readJavaScriptTree(directory) {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const contents = [];
-  for (const entry of entries) {
-    const entryPath = path.join(directory, entry.name);
-    if (entry.isDirectory())
-      contents.push(...(await readJavaScriptTree(entryPath)));
-    else if (entry.name.endsWith(".js"))
-      contents.push(await readFile(entryPath, "utf8"));
+function resolveRelativeModule(fromFile, specifier) {
+  const base = path.resolve(path.dirname(fromFile), specifier);
+  for (const candidate of [base, `${base}.js`, path.join(base, "index.js")]) {
+    if (existsSync(candidate)) return candidate;
   }
-  return contents.join("\n");
+  throw new Error(`Cannot resolve ${specifier} from ${fromFile}`);
+}
+
+async function readReachableJavaScript(entryFiles) {
+  const pending = [...entryFiles];
+  const visited = new Set();
+  const sources = [];
+  const externalSpecifiers = new Set();
+  while (pending.length > 0) {
+    const filename = pending.pop();
+    if (!filename || visited.has(filename)) continue;
+    visited.add(filename);
+    const source = await readFile(filename, "utf8");
+    sources.push(source);
+    for (const match of source.matchAll(/require\(["']([^"']+)["']\)/g)) {
+      const specifier = match[1];
+      if (!specifier) continue;
+      if (specifier.startsWith(".")) {
+        pending.push(resolveRelativeModule(filename, specifier));
+      } else {
+        externalSpecifiers.add(specifier);
+      }
+    }
+  }
+  return {
+    source: sources.join("\n"),
+    externalSpecifiers: [...externalSpecifiers],
+    files: [...visited],
+  };
 }
 
 test("all declared package exports load from dist outside the repository cwd", () => {
@@ -51,29 +75,25 @@ test("package export map never resolves source files", async () => {
 });
 
 test("browser-safe output has no server, OpenAI, Markdown, or Node-only imports", async () => {
-  const safeOutput = await Promise.all([
-    readFile(path.join(packageRoot, "dist/index.js"), "utf8"),
-    readJavaScriptTree(path.join(packageRoot, "dist/contracts")),
-    readJavaScriptTree(path.join(packageRoot, "dist/document")),
-    readJavaScriptTree(path.join(packageRoot, "dist/pricing")),
-    readJavaScriptTree(path.join(packageRoot, "dist/providers")),
+  const graph = await readReachableJavaScript([
+    path.join(packageRoot, "dist/index.js"),
+    path.join(packageRoot, "dist/contracts/index.js"),
+    path.join(packageRoot, "dist/document/index.js"),
+    path.join(packageRoot, "dist/pricing/index.js"),
   ]);
-  const bundledText = safeOutput.join("\n");
-  const requiredSpecifiers = Array.from(
-    bundledText.matchAll(/require\(["']([^"']+)["']\)/g),
-    (match) => match[1],
-  );
-  for (const specifier of requiredSpecifiers) {
+  for (const specifier of graph.externalSpecifiers) {
     assert.equal(specifier.startsWith("node:"), false);
     assert.equal(builtinModules.includes(specifier), false);
+    assert.equal(
+      specifier === "openai" || specifier.startsWith("openai/"),
+      false,
+    );
   }
-  for (const forbidden of [
-    /require\(["']openai["']\)/,
-    /require\(["']node:/,
-    /[/\\]server[/\\]/,
-    /[/\\](prompts|policies)[/\\]/,
-    /\.md["']/,
-  ]) {
-    assert.doesNotMatch(bundledText, forbidden);
+  assert.equal(
+    graph.files.some((file) => file.includes(`${path.sep}server${path.sep}`)),
+    false,
+  );
+  for (const forbidden of [/[/\\](prompts|policies)[/\\]/, /\.md["']/]) {
+    assert.doesNotMatch(graph.source, forbidden);
   }
 });

@@ -77,3 +77,41 @@ test("an unknown placeholder in the same request namespace fails closed", () => 
     ProtectedContentError,
   );
 });
+
+test("structured output restores placeholders without serializing through JSON text", () => {
+  const registry = ProtectedContentRegistry.create("source");
+  const formula = registry.protect("E = mc^2", {
+    kind: "math",
+    orderSensitive: true,
+  });
+  const url = registry.protect('https://example.com/a?x="quoted"', {
+    kind: "url",
+  });
+  assert.deepEqual(
+    registry.validateAndRestoreStructured({
+      replacement: {
+        content: [
+          { type: "text", text: `Keep ${formula}.` },
+          { type: "text", text: url },
+        ],
+      },
+    }),
+    {
+      replacement: {
+        content: [
+          { type: "text", text: "Keep E = mc^2." },
+          { type: "text", text: 'https://example.com/a?x="quoted"' },
+        ],
+      },
+    },
+  );
+});
+
+test("structured output fails closed when a protected placeholder is missing", () => {
+  const registry = ProtectedContentRegistry.create("source");
+  registry.protect("const value = 1;", { kind: "code" });
+  assert.throws(
+    () => registry.validateAndRestoreStructured({ text: "placeholder lost" }),
+    ProtectedContentError,
+  );
+});

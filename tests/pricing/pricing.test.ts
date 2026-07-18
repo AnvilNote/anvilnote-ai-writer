@@ -12,30 +12,36 @@ import {
 test("pricing registry contains the versioned Sol, Terra, and Luna rates", () => {
   assert.deepEqual(getModelPricing("openai", "gpt-5.6-sol"), {
     inputPerMillionTokens: 5,
+    cachedInputPerMillionTokens: 0.5,
     outputPerMillionTokens: 30,
+    standardInputTokenLimit: 272_000,
   });
   assert.deepEqual(getModelPricing("openai", "gpt-5.6-terra"), {
     inputPerMillionTokens: 2.5,
+    cachedInputPerMillionTokens: 0.25,
     outputPerMillionTokens: 15,
+    standardInputTokenLimit: 272_000,
   });
   assert.deepEqual(getModelPricing("openai", "gpt-5.6-luna"), {
     inputPerMillionTokens: 1,
+    cachedInputPerMillionTokens: 0.1,
     outputPerMillionTokens: 6,
+    standardInputTokenLimit: 272_000,
   });
 });
 
 test("input and output estimates are calculated separately", () => {
   assert.deepEqual(
     estimateCost("openai", "gpt-5.6-terra", {
-      inputTokens: 1_000_000,
-      estimatedOutputTokensMin: 100_000,
-      estimatedOutputTokensMax: 200_000,
+      inputTokens: 100_000,
+      estimatedOutputTokensMin: 10_000,
+      estimatedOutputTokensMax: 20_000,
       confidence: "low",
     }),
     {
       currency: "USD",
-      minimum: 4,
-      maximum: 5.5,
+      minimum: 0.4,
+      maximum: 0.55,
       pricingVersion: "2026-07-18",
       approximate: true,
     },
@@ -47,13 +53,13 @@ test("actual usage cost uses provider counts and does not invent missing usage",
     calculateActualUsageCost({
       provider: "openai",
       model: "gpt-5.6-sol",
-      inputTokens: 1_000_000,
-      outputTokens: 1_000_000,
-      totalTokens: 2_000_000,
+      inputTokens: 100_000,
+      outputTokens: 100_000,
+      totalTokens: 200_000,
       estimatedActualCostUsd: null,
       pricingVersion: null,
     }),
-    { estimatedActualCostUsd: 35, pricingVersion: "2026-07-18" },
+    { estimatedActualCostUsd: 3.5, pricingVersion: "2026-07-18" },
   );
 
   assert.deepEqual(
