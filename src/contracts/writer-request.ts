@@ -22,6 +22,7 @@ export interface AIWriterRequest {
   instruction: string;
   context: {
     locale: string;
+    requestedOutputLocale?: string;
     documentType?: string;
     writingStyle: WritingStyle;
     currentDocument?: AnvilNoteDocumentV1;
@@ -36,7 +37,12 @@ export interface AIWriterRequest {
 
 const attachmentContextSchema = z
   .object({
-    id: z.string().trim().min(1).max(128),
+    id: z
+      .string()
+      .trim()
+      .min(1)
+      .max(128)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
     filename: z.string().trim().min(1).max(512),
     mimeType: z.string().trim().min(1).max(128),
     extractedText: z.string().max(AI_ATTACHMENT_LIMITS.maxCharactersPerFile),
@@ -74,6 +80,7 @@ export const AIWriterRequestSchema: z.ZodType<AIWriterRequest> = z
     context: z
       .object({
         locale: z.string().trim().min(2).max(64),
+        requestedOutputLocale: z.string().trim().min(2).max(64).optional(),
         documentType: z.string().trim().min(1).max(128).optional(),
         writingStyle: z.enum(["auto", "neutral", "natural", "preserve-source"]),
         currentDocument: AnvilNoteDocumentV1Schema.optional(),
