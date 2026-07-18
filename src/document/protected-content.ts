@@ -72,7 +72,7 @@ export class ProtectedContentRegistry {
     return placeholder;
   }
 
-  validateAndRestore(output: string): string {
+  private assertValidOutput(output: string): void {
     for (const entry of this.entries) {
       if (countOccurrences(output, entry.placeholder) !== 1) {
         throw new ProtectedContentError(
@@ -106,11 +106,49 @@ export class ProtectedContentRegistry {
         "Unknown protected-content placeholder found.",
       );
     }
+  }
 
+  private restoreText(output: string): string {
     let restored = output;
     for (const entry of this.entries) {
       restored = restored.replace(entry.placeholder, entry.value);
     }
     return restored;
+  }
+
+  validateAndRestore(output: string): string {
+    this.assertValidOutput(output);
+    return this.restoreText(output);
+  }
+
+  validateAndRestoreStructured<T>(output: T): T {
+    const strings: string[] = [];
+    const collectStrings = (value: unknown): void => {
+      if (typeof value === "string") {
+        strings.push(value);
+        return;
+      }
+      if (Array.isArray(value)) {
+        for (const nested of value) collectStrings(nested);
+        return;
+      }
+      if (value !== null && typeof value === "object") {
+        for (const nested of Object.values(value)) collectStrings(nested);
+      }
+    };
+    collectStrings(output);
+    this.assertValidOutput(strings.join("\u0000"));
+
+    const restore = (value: unknown): unknown => {
+      if (typeof value === "string") return this.restoreText(value);
+      if (Array.isArray(value)) return value.map(restore);
+      if (value !== null && typeof value === "object") {
+        return Object.fromEntries(
+          Object.entries(value).map(([key, nested]) => [key, restore(nested)]),
+        );
+      }
+      return value;
+    };
+    return restore(output) as T;
   }
 }

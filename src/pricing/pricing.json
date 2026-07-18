@@ -7,15 +7,21 @@
       "models": {
         "gpt-5.6-sol": {
           "inputPerMillionTokens": 5,
-          "outputPerMillionTokens": 30
+          "cachedInputPerMillionTokens": 0.5,
+          "outputPerMillionTokens": 30,
+          "standardInputTokenLimit": 272000
         },
         "gpt-5.6-terra": {
           "inputPerMillionTokens": 2.5,
-          "outputPerMillionTokens": 15
+          "cachedInputPerMillionTokens": 0.25,
+          "outputPerMillionTokens": 15,
+          "standardInputTokenLimit": 272000
         },
         "gpt-5.6-luna": {
           "inputPerMillionTokens": 1,
-          "outputPerMillionTokens": 6
+          "cachedInputPerMillionTokens": 0.1,
+          "outputPerMillionTokens": 6,
+          "standardInputTokenLimit": 272000
         }
       }
     }

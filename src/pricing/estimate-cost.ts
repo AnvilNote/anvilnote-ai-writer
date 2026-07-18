@@ -29,6 +29,7 @@ export function estimateCost(
   }
   const pricing = getModelPricing(providerId, pricingId);
   if (!pricing) return null;
+  if (estimate.inputTokens > pricing.standardInputTokenLimit) return null;
 
   const inputCost =
     (estimate.inputTokens / 1_000_000) * pricing.inputPerMillionTokens;

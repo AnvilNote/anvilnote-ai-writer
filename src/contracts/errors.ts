@@ -7,6 +7,9 @@ export type AIWriterErrorCode =
   | "request_too_large"
   | "context_length_exceeded"
   | "invalid_structured_output"
+  | "invalid_request_schema"
+  | "provider_refusal"
+  | "incomplete_response"
   | "provider_timeout"
   | "request_cancelled"
   | "network_error"
@@ -19,6 +22,7 @@ export type AIWriterErrorCode =
 export interface AIWriterErrorShape {
   code: AIWriterErrorCode;
   message: string;
+  messageKey?: string;
   retryable: boolean;
   provider?: string;
   model?: string;

@@ -7,6 +7,7 @@ export type ConnectionTestStatus =
   | "rate-limited"
   | "network-error"
   | "timeout"
+  | "cancelled"
   | "unknown-error";
 
 export interface ConnectionTestOptions {

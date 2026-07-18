@@ -2,7 +2,9 @@ import pricing from "./pricing.json";
 
 export interface ModelPricing {
   inputPerMillionTokens: number;
+  cachedInputPerMillionTokens: number;
   outputPerMillionTokens: number;
+  standardInputTokenLimit: number;
 }
 
 export const PRICING_VERSION = pricing.version;
