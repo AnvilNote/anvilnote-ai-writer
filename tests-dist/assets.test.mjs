@@ -3,19 +3,26 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import test from "node:test";
+import test, { after } from "node:test";
 import { createRequire } from "node:module";
 
 const packageRoot = path.resolve(import.meta.dirname, "..");
+const externalDirectory = mkdtempSync(
+  path.join(tmpdir(), "anvilnote-ai-writer-assets-"),
+);
 const requireFromOutside = createRequire(
-  path.join(
-    mkdtempSync(path.join(tmpdir(), "anvilnote-ai-writer-assets-")),
-    "entry.cjs",
-  ),
+  path.join(externalDirectory, "entry.cjs"),
 );
-const server = requireFromOutside(
-  path.join(packageRoot, "dist/server/index.js"),
-);
+const previousCwd = process.cwd();
+let server;
+try {
+  process.chdir(externalDirectory);
+  server = requireFromOutside(path.join(packageRoot, "dist/server/index.js"));
+} finally {
+  process.chdir(previousCwd);
+}
+
+after(() => rmSync(externalDirectory, { recursive: true, force: true }));
 
 test("all registry assets load from dist outside the repository cwd", () => {
   for (const definition of server.PROMPT_TEMPLATES) {
@@ -37,9 +44,15 @@ test("npm package contains runtime assets and excludes sources and tests", () =>
     assert.equal(result.status, 0, result.stderr);
     const report = JSON.parse(result.stdout)[0];
     const paths = report.files.map((file) => file.path);
-    assert.ok(paths.includes("dist/prompts/common/system-v1.md"));
-    assert.ok(paths.includes("dist/policies/humanizer/en-v1.md"));
-    assert.ok(paths.includes("dist/policies/humanizer/zh-TW-v1.md"));
+    for (const definition of [
+      ...server.PROMPT_TEMPLATES,
+      ...server.WRITING_POLICIES,
+    ]) {
+      assert.ok(
+        paths.includes(`dist/${definition.assetPath}`),
+        `${definition.assetPath} is missing from the package`,
+      );
+    }
     assert.ok(paths.includes("THIRD_PARTY_NOTICES.md"));
     assert.equal(
       paths.some((file) => file.startsWith("src/")),
