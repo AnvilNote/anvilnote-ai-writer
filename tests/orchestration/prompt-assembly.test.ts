@@ -156,6 +156,42 @@ test("hostile selection remains data and selects the rewrite contract", () => {
   );
 });
 
+test("AST field names, code, and math do not create a false mixed-language route", () => {
+  const prepared = prepareWriterRequest({
+    requestId: "req_zh_routing",
+    intent: "rewrite-selection",
+    provider: { id: "openai", model: "gpt-5.6-terra" },
+    instruction: "請讓內容更精簡。",
+    context: {
+      locale: "zh-TW",
+      writingStyle: "auto",
+      selectedContent: {
+        schemaVersion: "anvilnote.fragment.v1",
+        type: "fragment",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "這是一段中文內容。" }],
+          },
+          {
+            type: "codeBlock",
+            attrs: { language: "typescript" },
+            content: [{ type: "text", text: "const value = true;" }],
+          },
+          { type: "mathBlock", attrs: { latex: "E = mc^2" } },
+        ],
+      },
+    },
+    options: { humanizerEnabled: true },
+  });
+  const context = prepared.sections.find(
+    (section) => section.id === "context.metadata",
+  );
+  assert.ok(context);
+  assert.match(context.content, /"mixedLanguageContent":false/);
+  assert.match(context.content, /"preserveOtherLanguages":false/);
+});
+
 test("Humanizer can be disabled without removing core constraints", () => {
   const request = createComposeRequest();
   const prepared = prepareWriterRequest({

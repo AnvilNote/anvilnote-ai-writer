@@ -52,18 +52,39 @@ export interface PreparedWriterRequest {
   };
 }
 
+function collectNaturalLanguageText(value: unknown, output: string[]): void {
+  if (!value || typeof value !== "object") return;
+  const record = value as Record<string, unknown>;
+  if (
+    record.type === "codeBlock" ||
+    record.type === "mathBlock" ||
+    record.type === "inlineMath"
+  ) {
+    return;
+  }
+  if (record.type === "text" && typeof record.text === "string") {
+    output.push(record.text);
+    return;
+  }
+  if (Array.isArray(record.content)) {
+    for (const child of record.content) {
+      collectNaturalLanguageText(child, output);
+    }
+  }
+}
+
 function collectLanguageSamples(request: AIWriterRequest): string[] {
-  const samples = [request.instruction];
+  const samples: string[] = [];
   if (request.context.selectedContent) {
-    samples.push(JSON.stringify(request.context.selectedContent));
+    collectNaturalLanguageText(request.context.selectedContent, samples);
   }
   if (request.context.currentDocument) {
-    samples.push(JSON.stringify(request.context.currentDocument));
+    collectNaturalLanguageText(request.context.currentDocument, samples);
   }
   for (const attachment of request.context.attachments ?? []) {
     samples.push(attachment.extractedText);
   }
-  return samples;
+  return samples.length > 0 ? samples : [request.instruction];
 }
 
 export function prepareWriterRequest(
