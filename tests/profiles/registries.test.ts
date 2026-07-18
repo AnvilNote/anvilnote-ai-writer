@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AIWriterRequest } from "../../src/contracts/index";
+import { WRITER_POLICY_IDS } from "../../src/contracts/index";
 import {
   OUTPUT_SCHEMA_IDS,
   PROMPT_TEMPLATES,
@@ -68,6 +69,10 @@ test("registries expose unique, versioned, cross-referenced definitions", () => 
     compose: "anvilnote.ai.compose-result.v1",
     rewrite: "anvilnote.ai.rewrite-result.v1",
   });
+  assert.deepEqual(
+    [...new Set(Object.values(WRITER_POLICY_IDS))].sort(),
+    WRITING_POLICIES.map(({ id }) => id).sort(),
+  );
   assert.doesNotThrow(() => assertWritingConfiguration());
 });
 
@@ -89,6 +94,22 @@ test("registry validation rejects incompatible prompt intent and references", ()
         profiles: invalidProfiles,
       }),
     /incompatible|unknown policy/i,
+  );
+});
+
+test("registry validation rejects an output schema incompatible with intent", () => {
+  assert.throws(
+    () =>
+      validateWritingConfiguration({
+        prompts: PROMPT_TEMPLATES,
+        policies: WRITING_POLICIES,
+        profiles: WRITING_PROFILES.map((profile) =>
+          profile.id === "compose.default.v1"
+            ? { ...profile, outputSchemaId: OUTPUT_SCHEMA_IDS.rewrite }
+            : profile,
+        ),
+      }),
+    /incompatible output schema/i,
   );
 });
 

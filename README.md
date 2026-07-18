@@ -24,6 +24,14 @@ Profile selection is deterministic: selected content uses
 `compose.default.v1`. Domain validation rejects inconsistent intent/context
 combinations before selection.
 
+Public compose/rewrite results carry trusted profile, prompt, schema, and
+policy IDs together with their versions. Result validation rejects metadata
+that does not match the result kind or selected v1 profile. Policy metadata is
+limited to the registered v1 policies and must include factual integrity,
+protected content, and exactly one resolved style; Humanizer is optional but
+cannot be stacked. The future provider payload will contain model-authored
+fields only; orchestration, not the model, adds execution metadata and usage.
+
 `auto` writing style resolves academic, legal, technical, and reference
 documents to neutral; handouts and notes to restrained natural; blogs and
 essays to natural; and selection rewrites to preserve-source. Explicit styles
@@ -38,10 +46,22 @@ the other language rather than stacking full language policies.
 ## Prompt assets
 
 Prompt and policy Markdown is allowlisted in registries. `pnpm build` copies
-those assets from `src` to matching paths under `dist`; the loader resolves
-them relative to its compiled module, never the repository or process cwd.
+only those exact registered assets from `src` to matching paths under `dist`
+and removes stale Markdown assets; the loader resolves them relative to its
+compiled module, never the repository or process cwd.
 Only `@anvilnote/ai-writer/server` imports the loader. Browser-safe exports do
 not import Node filesystem/path modules or embed prompt text.
+
+## Protected-content integration boundary
+
+Phase 2 applies the protected-content policy but deliberately does not rewrite
+typed AST nodes into placeholders. Math, code, and safe links remain structured
+AST data. During the later Web converter phase, Tiptap content that cannot be
+safely model-edited will either be represented by the browser-safe,
+request-scoped `ProtectedContentRegistry` or block submission with a specific
+unsupported-selection error. The registry validates exact placeholder counts
+before restoration and fails closed. No converter may silently discard an
+unknown node, mark, or attribute.
 
 To add a policy:
 

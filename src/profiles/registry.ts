@@ -16,6 +16,13 @@ export const OUTPUT_SCHEMA_IDS = {
 export type WriterOutputSchemaId =
   (typeof OUTPUT_SCHEMA_IDS)[keyof typeof OUTPUT_SCHEMA_IDS];
 
+const OUTPUT_SCHEMA_ID_BY_INTENT: Record<AIWriterIntent, WriterOutputSchemaId> =
+  {
+    compose: OUTPUT_SCHEMA_IDS.compose,
+    "compose-from-attachments": OUTPUT_SCHEMA_IDS.compose,
+    "rewrite-selection": OUTPUT_SCHEMA_IDS.rewrite,
+  };
+
 export interface WritingProfileDefinition {
   id: string;
   version: number;
@@ -129,6 +136,11 @@ export function validateWritingConfiguration(
     if (!outputSchemaIds.has(profile.outputSchemaId)) {
       throw new Error(
         `Profile ${profile.id} references unknown output schema ${profile.outputSchemaId}`,
+      );
+    }
+    if (profile.outputSchemaId !== OUTPUT_SCHEMA_ID_BY_INTENT[profile.intent]) {
+      throw new Error(
+        `Profile ${profile.id} has incompatible output schema ${profile.outputSchemaId} for intent ${profile.intent}`,
       );
     }
     for (const policyId of profile.policyIds) {

@@ -178,3 +178,27 @@ test("attachment IDs reject control characters before prompt assembly", () => {
     false,
   );
 });
+
+test("attachment IDs must be unique within one writer request", () => {
+  const extractedText = "safe text";
+  const duplicate = {
+    id: "attachment-1",
+    filename: "notes.txt",
+    mimeType: "text/plain",
+    extractedText,
+    characterCount: extractedText.length,
+    truncated: false,
+    warnings: [],
+  };
+  assert.equal(
+    AIWriterRequestSchema.safeParse({
+      ...request,
+      intent: "compose-from-attachments",
+      context: {
+        ...request.context,
+        attachments: [duplicate, { ...duplicate, filename: "other.txt" }],
+      },
+    }).success,
+    false,
+  );
+});

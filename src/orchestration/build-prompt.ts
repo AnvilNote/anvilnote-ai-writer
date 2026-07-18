@@ -15,14 +15,15 @@ import { wrapUntrustedPromptData } from "./prompt-boundaries";
 
 const COMMON_PROMPT_ID = "prompt.common.system.v1";
 
-function makeSchemaSection(outputSchemaId: string): PreparedPromptSection {
+function makeSchemaSection(): PreparedPromptSection {
   return {
     id: "output-contract",
     role: "developer",
     kind: "schema",
     content: [
-      `The provider will enforce the structured output schema identified as ${outputSchemaId}.`,
-      "Return only data that conforms to that supplied schema.",
+      "Follow the strict provider payload schema supplied separately by the trusted adapter.",
+      "Generate only the model-authored document or replacement, title or summary, and warnings requested by that schema.",
+      "Do not generate trusted execution metadata, profile or policy versions, provider usage, token counts, pricing, provider IDs, or model IDs.",
       "Do not wrap the result in a Markdown code fence and do not add fields outside the schema.",
       "Use warnings for missing or uncertain source information.",
     ].join("\n"),
@@ -74,7 +75,7 @@ export function buildPromptSections({
       "task",
       loadPromptTemplate(taskPrompt.id),
     ),
-    makeSchemaSection(profile.outputSchemaId),
+    makeSchemaSection(),
   ];
 
   for (const policyId of policyIds) {

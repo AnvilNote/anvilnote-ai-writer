@@ -101,6 +101,17 @@ export const AIWriterRequestSchema: z.ZodType<AIWriterRequest> = z
   .strict()
   .superRefine((request, context) => {
     const attachments = request.context.attachments ?? [];
+    const attachmentIds = new Set<string>();
+    for (const [index, attachment] of attachments.entries()) {
+      if (attachmentIds.has(attachment.id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["context", "attachments", index, "id"],
+          message: `Attachment ID must be unique: ${attachment.id}`,
+        });
+      }
+      attachmentIds.add(attachment.id);
+    }
     if (
       request.intent === "rewrite-selection" &&
       !request.context.selectedContent

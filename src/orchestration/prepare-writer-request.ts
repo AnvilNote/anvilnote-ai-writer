@@ -63,6 +63,15 @@ function collectNaturalLanguageText(value: unknown, output: string[]): void {
     return;
   }
   if (record.type === "text" && typeof record.text === "string") {
+    const isInlineCode =
+      Array.isArray(record.marks) &&
+      record.marks.some(
+        (mark) =>
+          mark !== null &&
+          typeof mark === "object" &&
+          (mark as Record<string, unknown>).type === "code",
+      );
+    if (isInlineCode) return;
     output.push(record.text);
     return;
   }

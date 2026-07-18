@@ -1,10 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test, { after } from "node:test";
 import { createRequire } from "node:module";
+import { copyRegisteredAssets } from "../scripts/copy-assets.mjs";
 
 const packageRoot = path.resolve(import.meta.dirname, "..");
 const externalDirectory = mkdtempSync(
@@ -53,6 +61,16 @@ test("npm package contains runtime assets and excludes sources and tests", () =>
         `${definition.assetPath} is missing from the package`,
       );
     }
+    const expectedRuntimeAssets = [
+      ...server.PROMPT_TEMPLATES,
+      ...server.WRITING_POLICIES,
+    ]
+      .map((definition) => `dist/${definition.assetPath}`)
+      .sort();
+    const packagedRuntimeAssets = paths
+      .filter((file) => /^dist\/(?:prompts|policies)\/.+\.md$/.test(file))
+      .sort();
+    assert.deepEqual(packagedRuntimeAssets, expectedRuntimeAssets);
     assert.ok(paths.includes("THIRD_PARTY_NOTICES.md"));
     assert.equal(
       paths.some((file) => file.startsWith("src/")),
@@ -64,6 +82,33 @@ test("npm package contains runtime assets and excludes sources and tests", () =>
     );
   } finally {
     rmSync(cache, { recursive: true, force: true });
+  }
+});
+
+test("asset copier ignores unregistered Markdown files", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "anvilnote-asset-copy-"));
+  const sourceRoot = path.join(root, "source");
+  const destinationRoot = path.join(root, "destination");
+  const registeredPath = "prompts/common/system-v1.md";
+  const privatePath = "prompts/common/private-notes.md";
+  try {
+    mkdirSync(path.join(sourceRoot, "prompts/common"), { recursive: true });
+    writeFileSync(path.join(sourceRoot, registeredPath), "registered", "utf8");
+    writeFileSync(path.join(sourceRoot, privatePath), "private", "utf8");
+
+    await copyRegisteredAssets({
+      sourceRoot,
+      destinationRoot,
+      assetPaths: [registeredPath],
+    });
+
+    assert.equal(
+      readFileSync(path.join(destinationRoot, registeredPath), "utf8"),
+      "registered",
+    );
+    assert.equal(existsSync(path.join(destinationRoot, privatePath)), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

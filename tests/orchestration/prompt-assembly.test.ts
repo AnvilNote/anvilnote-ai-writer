@@ -114,6 +114,23 @@ test("profile, output schema, and policy versions are derived outside user data"
   assert.equal(prepared.maxOutputTokens, 2_000);
 });
 
+test("schema guidance leaves trusted metadata and usage to orchestration", () => {
+  const schemaSection = prepareWriterRequest(
+    createComposeRequest(),
+  ).sections.find((section) => section.kind === "schema");
+  assert.ok(schemaSection);
+  assert.match(schemaSection.content, /strict provider payload schema/i);
+  assert.match(
+    schemaSection.content,
+    /do not generate trusted execution metadata/i,
+  );
+  assert.match(schemaSection.content, /provider usage|token counts/i);
+  assert.doesNotMatch(
+    schemaSection.content,
+    /provider will enforce.*anvilnote\.ai\.compose-result\.v1/i,
+  );
+});
+
 test("hostile attachment text exists only inside an untrusted data section", () => {
   const prepared = prepareWriterRequest(createComposeRequest());
   const trustedText = prepared.sections
@@ -171,7 +188,14 @@ test("AST field names, code, and math do not create a false mixed-language route
         content: [
           {
             type: "paragraph",
-            content: [{ type: "text", text: "這是一段中文內容。" }],
+            content: [
+              { type: "text", text: "這是一段中文內容。" },
+              {
+                type: "text",
+                text: "const inlineValue = true",
+                marks: [{ type: "code" }],
+              },
+            ],
           },
           {
             type: "codeBlock",
