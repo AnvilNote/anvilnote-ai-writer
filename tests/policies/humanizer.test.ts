@@ -130,6 +130,7 @@ test("Humanizer provenance records exact MIT-licensed upstream revisions", () =>
     HUMANIZER_UPSTREAM_REVISIONS.stopSlop,
     "Copyright (c) 2025 Siqi Chen",
     "Copyright (c) 2026 歸藏",
+    "The above copyright notice and this permission notice shall be included",
   ]) {
     assert.match(
       notices,
