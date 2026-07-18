@@ -6,10 +6,7 @@ import {
 } from "../../src/document/index";
 
 test("formula, code, and URL placeholders restore exact content", () => {
-  const registry = new ProtectedContentRegistry(
-    "requestABC123",
-    "Ordinary source text",
-  );
+  const registry = ProtectedContentRegistry.create("Ordinary source text");
   const formula = registry.protect("E = mc^2", {
     kind: "math",
     orderSensitive: true,
@@ -27,16 +24,28 @@ test("formula, code, and URL placeholders restore exact content", () => {
 test("placeholder namespace collision is rejected", () => {
   assert.throws(
     () =>
-      new ProtectedContentRegistry(
-        "requestABC123",
-        "{{ANVIL_PROTECTED_requestABC123_0001}}",
+      ProtectedContentRegistry.create(
+        "{{ANVIL_PROTECTED_existingNamespace_0001}}",
       ),
     ProtectedContentError,
   );
 });
 
+test("each registry generates a distinct cryptographic namespace", () => {
+  const first = ProtectedContentRegistry.create("source one").protect("value", {
+    kind: "node",
+  });
+  const second = ProtectedContentRegistry.create("source two").protect(
+    "value",
+    {
+      kind: "node",
+    },
+  );
+  assert.notEqual(first, second);
+});
+
 test("missing, duplicated, changed, and reordered placeholders fail closed", () => {
-  const registry = new ProtectedContentRegistry("requestXYZ789", "source");
+  const registry = ProtectedContentRegistry.create("source");
   const first = registry.protect("first", {
     kind: "identifier",
     orderSensitive: true,
@@ -60,13 +69,11 @@ test("missing, duplicated, changed, and reordered placeholders fail closed", () 
 });
 
 test("an unknown placeholder in the same request namespace fails closed", () => {
-  const registry = new ProtectedContentRegistry("requestNEW123", "source");
+  const registry = ProtectedContentRegistry.create("source");
   const expected = registry.protect("expected", { kind: "node" });
+  const namespacePrefix = expected.slice(0, expected.lastIndexOf("_") + 1);
   assert.throws(
-    () =>
-      registry.validateAndRestore(
-        `${expected} {{ANVIL_PROTECTED_requestNEW123_0099}}`,
-      ),
+    () => registry.validateAndRestore(`${expected} ${namespacePrefix}0099}}`),
     ProtectedContentError,
   );
 });

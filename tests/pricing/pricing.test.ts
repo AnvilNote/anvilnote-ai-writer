@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   calculateActualUsageCost,
+  createTokenEstimate,
   estimateCost,
   estimateTextTokens,
   formatEstimatedCost,
@@ -105,4 +106,25 @@ test("fallback token estimator is structural and low confidence", () => {
 test("tiny estimates format below one cent", () => {
   assert.equal(formatEstimatedCost(0.00042), "< US$0.01");
   assert.equal(formatEstimatedCost(1.23456), "US$1.2346");
+});
+
+test("negative, non-finite, and inverted token ranges are rejected", () => {
+  assert.throws(
+    () => createTokenEstimate([], { minimum: -5, maximum: -3 }),
+    RangeError,
+  );
+  assert.throws(
+    () => createTokenEstimate([], { minimum: 10, maximum: 5 }),
+    RangeError,
+  );
+  assert.throws(
+    () =>
+      estimateCost("openai", "gpt-5.6-terra", {
+        inputTokens: 10,
+        estimatedOutputTokensMin: Number.NaN,
+        estimatedOutputTokensMax: 20,
+        confidence: "low",
+      }),
+    RangeError,
+  );
 });

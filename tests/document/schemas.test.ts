@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import path from "node:path";
 import test from "node:test";
 import {
   AI_DOCUMENT_LIMITS,
@@ -323,6 +325,31 @@ test("oversized document is rejected", () => {
           ],
         },
       ],
+    }).success,
+    false,
+  );
+});
+
+test("deep untrusted AST is rejected without exponential union parsing", () => {
+  const workerPath = path.resolve("tests/document/deep-schema-worker.ts");
+  const result = spawnSync(process.execPath, ["--import", "tsx", workerPath], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    timeout: 1_500,
+  });
+  assert.equal(
+    result.status,
+    0,
+    `deep-schema worker failed or timed out: ${result.stderr || result.stdout}`,
+  );
+});
+
+test("empty text nodes are rejected because ProseMirror cannot represent them", () => {
+  assert.equal(
+    AnvilNoteDocumentV1Schema.safeParse({
+      schemaVersion: "anvilnote.document.v1",
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "" }] }],
     }).success,
     false,
   );

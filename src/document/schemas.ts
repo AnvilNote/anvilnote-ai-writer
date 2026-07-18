@@ -2,14 +2,7 @@ import { z } from "zod";
 import type { AnvilNoteDocumentV1 } from "./document-v1";
 import type { AnvilNoteDocumentFragmentV1 } from "./fragment-v1";
 import type { AnvilNoteMarkV1 } from "./marks-v1";
-import type {
-  AnvilNoteBlockNodeV1,
-  AnvilNoteInlineNodeV1,
-  AnvilNoteListItemNodeV1,
-  AnvilNoteTableCellNodeV1,
-  AnvilNoteTableHeaderNodeV1,
-  AnvilNoteTableRowNodeV1,
-} from "./nodes-v1";
+import type { AnvilNoteBlockNodeV1, AnvilNoteInlineNodeV1 } from "./nodes-v1";
 import {
   addDocumentLimitIssues,
   addDocumentStructureIssues,
@@ -59,7 +52,7 @@ export const AnvilNoteMarkV1Schema: z.ZodType<AnvilNoteMarkV1> = z.union([
 const textNodeSchema = z
   .object({
     type: z.literal("text"),
-    text: z.string().max(250_000),
+    text: z.string().min(1).max(250_000),
     marks: z.array(AnvilNoteMarkV1Schema).max(16).optional(),
   })
   .strict()
@@ -112,7 +105,7 @@ const headingSchema = z
   })
   .strict();
 
-const listItemSchema: z.ZodType<AnvilNoteListItemNodeV1> = z
+const listItemSchema = z
   .object({
     type: z.literal("listItem"),
     content: z.array(blockReference).min(1).max(1_000),
@@ -207,7 +200,7 @@ const tableCellAttributesSchema = z
     }
   });
 
-const tableHeaderSchema: z.ZodType<AnvilNoteTableHeaderNodeV1> = z
+const tableHeaderSchema = z
   .object({
     type: z.literal("tableHeader"),
     attrs: tableCellAttributesSchema,
@@ -215,7 +208,7 @@ const tableHeaderSchema: z.ZodType<AnvilNoteTableHeaderNodeV1> = z
   })
   .strict();
 
-const tableCellSchema: z.ZodType<AnvilNoteTableCellNodeV1> = z
+const tableCellSchema = z
   .object({
     type: z.literal("tableCell"),
     attrs: tableCellAttributesSchema,
@@ -223,7 +216,7 @@ const tableCellSchema: z.ZodType<AnvilNoteTableCellNodeV1> = z
   })
   .strict();
 
-const tableRowSchema: z.ZodType<AnvilNoteTableRowNodeV1> = z
+const tableRowSchema = z
   .object({
     type: z.literal("tableRow"),
     attrs: z
@@ -266,7 +259,7 @@ const horizontalRuleSchema = z
   })
   .strict();
 
-blockNodeSchema = z.union([
+blockNodeSchema = z.discriminatedUnion("type", [
   paragraphSchema,
   headingSchema,
   bulletListSchema,

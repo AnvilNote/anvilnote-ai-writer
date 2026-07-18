@@ -46,17 +46,25 @@ export function createTokenEstimate(
   inputs: Array<{ text: string; kind?: TokenEstimationContentKind }>,
   outputRange: { minimum: number; maximum: number },
 ): TokenEstimate {
+  if (
+    !Number.isFinite(outputRange.minimum) ||
+    !Number.isFinite(outputRange.maximum) ||
+    outputRange.minimum < 0 ||
+    outputRange.maximum < 0 ||
+    outputRange.minimum > outputRange.maximum
+  ) {
+    throw new RangeError(
+      "Output token range must be finite, non-negative, and ordered.",
+    );
+  }
   const inputTokens = inputs.reduce(
     (total, input) => total + estimateTextTokens(input.text, input.kind).tokens,
     0,
   );
   return {
     inputTokens,
-    estimatedOutputTokensMin: Math.max(0, Math.floor(outputRange.minimum)),
-    estimatedOutputTokensMax: Math.max(
-      Math.floor(outputRange.minimum),
-      Math.ceil(outputRange.maximum),
-    ),
+    estimatedOutputTokensMin: Math.floor(outputRange.minimum),
+    estimatedOutputTokensMax: Math.ceil(outputRange.maximum),
     confidence: "low",
   };
 }

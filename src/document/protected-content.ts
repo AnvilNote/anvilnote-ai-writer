@@ -38,12 +38,22 @@ export class ProtectedContentRegistry {
   private readonly namespacePrefix: string;
   private readonly entries: ProtectedContentEntry[] = [];
 
-  constructor(requestNonce: string, sourceText: string) {
+  static create(sourceText: string): ProtectedContentRegistry {
+    const cryptoApi = globalThis.crypto;
+    if (!cryptoApi || typeof cryptoApi.randomUUID !== "function") {
+      throw new ProtectedContentError(
+        "Cryptographically secure randomness is unavailable.",
+      );
+    }
+    return new ProtectedContentRegistry(cryptoApi.randomUUID(), sourceText);
+  }
+
+  private constructor(requestNonce: string, sourceText: string) {
     if (!/^[A-Za-z0-9_-]{8,64}$/.test(requestNonce)) {
       throw new ProtectedContentError("Protected-content nonce is invalid.");
     }
     this.namespacePrefix = `{{ANVIL_PROTECTED_${requestNonce}_`;
-    if (sourceText.includes(this.namespacePrefix)) {
+    if (sourceText.includes("{{ANVIL_PROTECTED_")) {
       throw new ProtectedContentError(
         "Protected-content namespace collides with source text.",
       );
