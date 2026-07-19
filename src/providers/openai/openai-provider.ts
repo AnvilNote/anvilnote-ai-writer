@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { z } from "zod";
 import type {
   ResponseCreateParamsNonStreaming,
   ResponseUsage,
@@ -30,7 +31,12 @@ import {
   sanitizeOpenAIDiagnosticId,
 } from "./openai-errors";
 import {
-  parseOpenAIModelPayload,
+  getSafeOpenAITextMarksShape,
+  getSafeOpenAITextMarksShapeCounts,
+  parseOpenAIModelPayloadWithNormalization,
+  type ParsedOpenAIModelPayload,
+  type SafeOpenAITextMarksShape,
+  type SafeOpenAITextMarksShapeCounts,
   validateNormalizedOpenAIModelPayload,
 } from "./openai-model-payload";
 import { normalizeOpenAIUsage } from "./openai-usage";
@@ -87,6 +93,14 @@ export interface SafeOpenAIExecutionLogMetadata {
   inputTokens?: number;
   outputTokens?: number;
   errorCode?: string;
+  providerStatus?: number;
+  providerCode?: string;
+  providerType?: string;
+  providerParam?: string;
+  validationIssuePaths?: string[];
+  marksShape?: SafeOpenAITextMarksShape;
+  rawOutputTextMarksShapeCounts?: SafeOpenAITextMarksShapeCounts;
+  normalizedMissingMarksCount?: number;
 }
 
 export function toSafeOpenAIExecutionLogMetadata(
@@ -172,10 +186,55 @@ async function abortableSleep(
   });
 }
 
+function getSafeRawOutputTextMarksShapeCounts(
+  response: OpenAIParsedResponseLike,
+): SafeOpenAITextMarksShapeCounts | undefined {
+  const outputTexts = response.output
+    .flatMap((item) => item.content ?? [])
+    .filter((content) => content.type === "output_text")
+    .map((content) => content.text);
+  if (outputTexts.length !== 1 || typeof outputTexts[0] !== "string") {
+    return undefined;
+  }
+  try {
+    return getSafeOpenAITextMarksShapeCounts(JSON.parse(outputTexts[0]));
+  } catch {
+    return undefined;
+  }
+}
+
+function isSafeTextMarksShapeCounts(
+  value: unknown,
+): value is SafeOpenAITextMarksShapeCounts {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const allowedShapes = new Set<SafeOpenAITextMarksShape>([
+    "missing",
+    "null",
+    "array",
+    "object",
+  ]);
+  const entries = Object.entries(value);
+  return (
+    entries.length > 0 &&
+    entries.every(
+      ([shape, count]) =>
+        allowedShapes.has(shape as SafeOpenAITextMarksShape) &&
+        Number.isSafeInteger(count) &&
+        count > 0,
+    )
+  );
+}
+
+interface ParsedCompletedPayload extends ParsedOpenAIModelPayload {
+  rawOutputTextMarksShapeCounts?: SafeOpenAITextMarksShapeCounts;
+}
+
 function parseCompletedPayload(
   response: OpenAIParsedResponseLike,
   request: PreparedWriterRequest,
-) {
+): ParsedCompletedPayload {
   const refusal = response.output
     .flatMap((item) => item.content ?? [])
     .find((content) => content.type === "refusal");
@@ -225,26 +284,74 @@ function parseCompletedPayload(
       }),
     );
   }
-  if (request.outputSchemaId === "anvilnote.ai.compose-result.v1") {
-    return parseOpenAIModelPayload(
-      "anvilnote.ai.compose-result.v1",
+  try {
+    if (
+      request.outputSchemaId !== "anvilnote.ai.compose-result.v1" &&
+      request.outputSchemaId !== "anvilnote.ai.rewrite-result.v1"
+    ) {
+      throw new AIWriterError(
+        createAIWriterErrorShape("invalid_request_schema", {
+          retryable: false,
+          provider: "openai",
+          model: request.provider.model,
+          requestId: request.requestId,
+        }),
+      );
+    }
+    const parsed = parseOpenAIModelPayloadWithNormalization(
+      request.outputSchemaId,
       response.output_parsed,
     );
+    const rawOutputTextMarksShapeCounts =
+      getSafeRawOutputTextMarksShapeCounts(response);
+    return {
+      ...parsed,
+      ...(rawOutputTextMarksShapeCounts
+        ? { rawOutputTextMarksShapeCounts }
+        : {}),
+    };
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const validationIssuePaths = [
+        ...new Set(
+          error.issues.map((issue) =>
+            issue.path.length > 0 ? issue.path.join(".") : "root",
+          ),
+        ),
+      ].slice(0, 8);
+      const hasMarksIssue = error.issues.some(
+        (issue) => issue.path.at(-1) === "marks",
+      );
+      throw new AIWriterError(
+        createAIWriterErrorShape("invalid_structured_output", {
+          retryable: true,
+          provider: "openai",
+          model: request.provider.model,
+          requestId: request.requestId,
+          details: {
+            validationStage: "provider-payload",
+            validationIssuePaths,
+            ...(hasMarksIssue
+              ? (() => {
+                  const marksShape = getSafeOpenAITextMarksShape(
+                    response.output_parsed,
+                  );
+                  const rawOutputTextMarksShapeCounts =
+                    getSafeRawOutputTextMarksShapeCounts(response);
+                  return {
+                    ...(marksShape ? { marksShape } : {}),
+                    ...(rawOutputTextMarksShapeCounts
+                      ? { rawOutputTextMarksShapeCounts }
+                      : {}),
+                  };
+                })()
+              : {}),
+          },
+        }),
+      );
+    }
+    throw error;
   }
-  if (request.outputSchemaId === "anvilnote.ai.rewrite-result.v1") {
-    return parseOpenAIModelPayload(
-      "anvilnote.ai.rewrite-result.v1",
-      response.output_parsed,
-    );
-  }
-  throw new AIWriterError(
-    createAIWriterErrorShape("invalid_request_schema", {
-      retryable: false,
-      provider: "openai",
-      model: request.provider.model,
-      requestId: request.requestId,
-    }),
-  );
 }
 
 export interface OpenAIProviderDependencies {
@@ -327,7 +434,8 @@ export class OpenAIProviderAdapter implements AIProviderAdapter {
           if (abortContext.signal.aborted) {
             throw new Error("provider response arrived after cancellation");
           }
-          let payload = parseCompletedPayload(response, request);
+          const parsedPayload = parseCompletedPayload(response, request);
+          let payload = parsedPayload.payload;
           if (options.protectedContentRegistry) {
             const restored =
               options.protectedContentRegistry.validateAndRestoreStructured(
@@ -366,6 +474,18 @@ export class OpenAIProviderAdapter implements AIProviderAdapter {
               ...(usage.outputTokens !== null
                 ? { outputTokens: usage.outputTokens }
                 : {}),
+              ...(parsedPayload.normalizedMissingMarksCount > 0
+                ? {
+                    normalizedMissingMarksCount:
+                      parsedPayload.normalizedMissingMarksCount,
+                    ...(parsedPayload.rawOutputTextMarksShapeCounts
+                      ? {
+                          rawOutputTextMarksShapeCounts:
+                            parsedPayload.rawOutputTextMarksShapeCounts,
+                        }
+                      : {}),
+                  }
+                : {}),
             }),
           );
           return {
@@ -389,6 +509,44 @@ export class OpenAIProviderAdapter implements AIProviderAdapter {
               attempt,
               durationMs: Math.max(0, this.now() - startedAt),
               errorCode: error.code,
+              ...(typeof error.details?.providerStatus === "number"
+                ? { providerStatus: error.details.providerStatus }
+                : {}),
+              ...(typeof error.details?.providerCode === "string"
+                ? { providerCode: error.details.providerCode }
+                : {}),
+              ...(typeof error.details?.providerType === "string"
+                ? { providerType: error.details.providerType }
+                : {}),
+              ...(typeof error.details?.providerParam === "string"
+                ? { providerParam: error.details.providerParam }
+                : {}),
+              ...(Array.isArray(error.details?.validationIssuePaths)
+                ? {
+                    validationIssuePaths:
+                      error.details.validationIssuePaths.filter(
+                        (path): path is string => typeof path === "string",
+                      ),
+                }
+                : {}),
+              ...(
+                (["missing", "null", "array", "object"] as const).includes(
+                  error.details?.marksShape as SafeOpenAITextMarksShape,
+                )
+                  ? {
+                      marksShape:
+                        error.details?.marksShape as SafeOpenAITextMarksShape,
+                    }
+                  : {}
+              ),
+              ...(isSafeTextMarksShapeCounts(
+                error.details?.rawOutputTextMarksShapeCounts,
+              )
+                ? {
+                    rawOutputTextMarksShapeCounts:
+                      error.details.rawOutputTextMarksShapeCounts,
+                  }
+                : {}),
             }),
           );
           if (attempt >= 2 || !error.retryable || abortContext.signal.aborted) {
@@ -397,7 +555,8 @@ export class OpenAIProviderAdapter implements AIProviderAdapter {
           if (
             error.code === "invalid_structured_output" ||
             error.code === "provider_timeout" ||
-            error.code === "network_error"
+            error.code === "network_error" ||
+            error.code === "provider_error"
           ) {
             usageReliable = false;
           }

@@ -1,5 +1,10 @@
 import { z } from "zod";
 import {
+  AI_DOCUMENT_LIMITS,
+  ANVIL_NOTE_CALLOUT_KINDS,
+  ANVIL_NOTE_QUESTION_KINDS,
+  ANVIL_NOTE_SIMPLE_MARK_TYPES,
+  ANVIL_NOTE_WRITTEN_MODES,
   AnvilNoteDocumentFragmentV1Schema,
   AnvilNoteDocumentV1Schema,
 } from "../../document/index";
@@ -16,9 +21,27 @@ export type OpenAIComposePayloadV1 = ComposeModelPayloadV1;
 export type OpenAIRewritePayloadV1 = RewriteModelPayloadV1;
 export type OpenAIModelPayloadV1 = WriterModelPayloadV1;
 
-const simpleMarkSchemas = ["bold", "italic", "strike", "code", "underline"].map(
-  (type) => z.object({ type: z.literal(type) }).strict(),
-);
+export type SafeOpenAITextMarksShape = "missing" | "null" | "array" | "object";
+export type SafeOpenAITextMarksShapeCounts = Partial<
+  Record<SafeOpenAITextMarksShape, number>
+>;
+
+export interface OpenAIMissingTextMarksNormalizationResult {
+  value: unknown;
+  normalizedMissingMarksCount: number;
+}
+
+export interface ParsedOpenAIModelPayload {
+  payload: OpenAIModelPayloadV1;
+  normalizedMissingMarksCount: number;
+}
+
+const SAFE_OPENAI_TEXT_MARKS_SHAPES: SafeOpenAITextMarksShape[] = [
+  "missing",
+  "null",
+  "array",
+  "object",
+];
 
 const linkMarkSchema = z
   .object({
@@ -33,12 +56,27 @@ const linkMarkSchema = z
   })
   .strict();
 
-const markSchema = z.union([...simpleMarkSchemas, linkMarkSchema]);
+const simpleMarkSchemas = ANVIL_NOTE_SIMPLE_MARK_TYPES.map(
+  (type) => z.object({ type: z.literal(type) }).strict(),
+);
+
+/**
+ * This mirrors the public AnvilNote mark union. The only wire adaptation is
+ * that link `title` and `target` are required nullable values so the emitted
+ * JSON Schema complies with OpenAI strict Structured Outputs requirements.
+ * `removeNullOptionalProperties()` restores the public optional shape before
+ * the public AST schema performs the final semantic validation.
+ */
+const providerTextMarkSchema = z.union([...simpleMarkSchemas, linkMarkSchema]);
+const providerTextMarksSchema = z
+  .array(providerTextMarkSchema)
+  .max(16)
+  .nullable();
 const textNodeSchema = z
   .object({
     type: z.literal("text"),
     text: z.string().min(1).max(250_000),
-    marks: z.array(markSchema).max(16).nullable(),
+    marks: providerTextMarksSchema,
   })
   .strict();
 const hardBreakNodeSchema = z.object({ type: z.literal("hardBreak") }).strict();
@@ -109,7 +147,17 @@ const codeBlockSchema = z
   .object({
     type: z.literal("codeBlock"),
     attrs: z.object({ language: z.string().min(1).max(128) }).strict(),
-    content: z.array(textNodeSchema).max(1_000),
+    content: z
+      .array(
+        z
+          .object({
+            type: z.literal("text"),
+            text: z.string().min(1).max(250_000),
+            marks: z.null(),
+          })
+          .strict(),
+      )
+      .max(1_000),
   })
   .strict();
 const mathBlockSchema = z
@@ -123,6 +171,65 @@ const mathBlockSchema = z
         refName: z.string().min(1).max(256).nullable(),
       })
       .strict(),
+  })
+  .strict();
+const calloutSchema = z
+  .object({
+    type: z.literal("callout"),
+    attrs: z
+      .object({
+        kind: z.enum(ANVIL_NOTE_CALLOUT_KINDS),
+        title: z.string().min(1).max(1_024).nullable(),
+      })
+      .strict(),
+    content: z
+      .array(
+        z.union([
+          paragraphSchema,
+          bulletListSchema,
+          orderedListSchema,
+          codeBlockSchema,
+          mathBlockSchema,
+        ]),
+      )
+      .min(1)
+      .max(1_000),
+  })
+  .strict();
+const providerSupportedContainerContentSchema = z.union([
+  paragraphSchema,
+  bulletListSchema,
+  orderedListSchema,
+  codeBlockSchema,
+  mathBlockSchema,
+]);
+const proofSchema = z
+  .object({
+    type: z.literal("proof"),
+    content: z
+      .array(providerSupportedContainerContentSchema)
+      .min(1)
+      .max(1_000),
+  })
+  .strict();
+const questionSchema = z
+  .object({
+    type: z.literal("question"),
+    kind: z.enum(ANVIL_NOTE_QUESTION_KINDS),
+    writtenMode: z.enum(ANVIL_NOTE_WRITTEN_MODES),
+    writtenLines: z.number().int().min(1).max(100),
+    writtenHeightPercent: z.number().min(5).max(100),
+    writtenHeightCm: z.number().positive().max(1_000).nullable(),
+    multiForceOneColumn: z.boolean(),
+    body: z
+      .array(providerSupportedContainerContentSchema)
+      .min(1)
+      .max(1_000),
+    choices: z
+      .array(z.union([paragraphSchema, mathBlockSchema]))
+      .min(2)
+      .max(100)
+      .nullable(),
   })
   .strict();
 const tableCellAttributesSchema = z
@@ -197,6 +304,9 @@ blockNodeSchema = z.discriminatedUnion("type", [
   blockquoteSchema,
   codeBlockSchema,
   mathBlockSchema,
+  calloutSchema,
+  proofSchema,
+  questionSchema,
   tableSchema,
   tableRowSchema,
   tableHeaderSchema,
@@ -262,34 +372,402 @@ function removeNullOptionalProperties(value: unknown): unknown {
   if (value === null || typeof value !== "object") {
     return value;
   }
-  return Object.fromEntries(
+  const normalized = Object.fromEntries(
     Object.entries(value)
       .filter(([, nested]) => nested !== null)
       .map(([key, nested]) => [key, removeNullOptionalProperties(nested)]),
   );
+  const original = value as Record<string, unknown>;
+  if (
+    normalized.type === "callout" &&
+    original.attrs !== null &&
+    typeof original.attrs === "object" &&
+    !Array.isArray(original.attrs) &&
+    (original.attrs as Record<string, unknown>).title === null
+  ) {
+    const normalizedAttrs =
+      normalized.attrs !== null &&
+      typeof normalized.attrs === "object" &&
+      !Array.isArray(normalized.attrs)
+        ? (normalized.attrs as Record<string, unknown>)
+        : {};
+    return { ...normalized, attrs: { ...normalizedAttrs, title: null } };
+  }
+  if (
+    normalized.type === "questionItem" &&
+    original.attrs !== null &&
+    typeof original.attrs === "object" &&
+    !Array.isArray(original.attrs) &&
+    (original.attrs as Record<string, unknown>).writtenHeightCm === null
+  ) {
+    const normalizedAttrs =
+      normalized.attrs !== null &&
+      typeof normalized.attrs === "object" &&
+      !Array.isArray(normalized.attrs)
+        ? (normalized.attrs as Record<string, unknown>)
+        : {};
+    return {
+      ...normalized,
+      attrs: { ...normalizedAttrs, writtenHeightCm: null },
+    };
+  }
+  if (
+    normalized.type === "text" &&
+    Array.isArray(normalized.marks) &&
+    normalized.marks.length === 0
+  ) {
+    return Object.fromEntries(
+      Object.entries(normalized).filter(([key]) => key !== "marks"),
+    );
+  }
+  return normalized;
+}
+
+function expandProviderQuestionWire(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(expandProviderQuestionWire);
+  if (value === null || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  if (
+    record.type === "question" &&
+    Array.isArray(record.body) &&
+    (record.choices === null || Array.isArray(record.choices))
+  ) {
+    const choices = record.choices as unknown[] | null;
+    return {
+      type: "question",
+      content: [
+        {
+          type: "questionItem",
+          attrs: {
+            kind: record.kind,
+            writtenMode: record.writtenMode,
+            writtenLines: record.writtenLines,
+            writtenHeightPercent: record.writtenHeightPercent,
+            writtenHeightCm: record.writtenHeightCm,
+            multiForceOneColumn: record.multiForceOneColumn,
+          },
+          content: [
+            ...record.body.map(expandProviderQuestionWire),
+            ...(choices === null
+              ? []
+              : [
+                  {
+                    type: "choiceList",
+                    content: choices.map((choice) => ({
+                      type: "choiceItem",
+                      content: [expandProviderQuestionWire(choice)],
+                    })),
+                  },
+                ]),
+          ],
+        },
+      ],
+    };
+  }
+  return Object.fromEntries(
+    Object.entries(record).map(([key, nested]) => [
+      key,
+      expandProviderQuestionWire(nested),
+    ]),
+  );
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+interface MissingMarksNormalizationState {
+  visitedNodes: number;
+  normalizedMissingMarksCount: number;
+  exceededLimits: boolean;
+}
+
+function visitKnownNode(
+  depth: number,
+  state: MissingMarksNormalizationState,
+): boolean {
+  state.visitedNodes += 1;
+  if (
+    state.visitedNodes > AI_DOCUMENT_LIMITS.maxNodes ||
+    depth > AI_DOCUMENT_LIMITS.maxDepth
+  ) {
+    state.exceededLimits = true;
+    return false;
+  }
+  return true;
+}
+
+function normalizeInlineContent(
+  value: unknown,
+  depth: number,
+  state: MissingMarksNormalizationState,
+): unknown {
+  if (!Array.isArray(value)) return value;
+  let changed = false;
+  const normalized = value.map((entry) => {
+    const next = normalizeInlineNode(entry, depth, state);
+    changed ||= next !== entry;
+    return next;
+  });
+  return changed ? normalized : value;
+}
+
+function normalizeInlineNode(
+  value: unknown,
+  depth: number,
+  state: MissingMarksNormalizationState,
+): unknown {
+  if (state.exceededLimits || !isPlainRecord(value)) return value;
+  if (!visitKnownNode(depth, state)) return value;
+  if (value.type !== "text") return value;
+  if (typeof value.text !== "string" || Object.hasOwn(value, "marks")) {
+    return value;
+  }
+  state.normalizedMissingMarksCount += 1;
+  return { ...value, marks: null };
+}
+
+function normalizeBlockContent(
+  value: unknown,
+  depth: number,
+  state: MissingMarksNormalizationState,
+): unknown {
+  if (!Array.isArray(value)) return value;
+  let changed = false;
+  const normalized = value.map((entry) => {
+    const next = normalizeBlockNode(entry, depth, state);
+    changed ||= next !== entry;
+    return next;
+  });
+  return changed ? normalized : value;
+}
+
+function normalizeBlockNode(
+  value: unknown,
+  depth: number,
+  state: MissingMarksNormalizationState,
+): unknown {
+  if (state.exceededLimits || !isPlainRecord(value)) return value;
+  if (!visitKnownNode(depth, state)) return value;
+
+  const isInlineContainer =
+    value.type === "paragraph" ||
+    value.type === "heading" ||
+    value.type === "codeBlock";
+  if (isInlineContainer) {
+    const content = normalizeInlineContent(value.content, depth + 1, state);
+    return content === value.content ? value : { ...value, content };
+  }
+
+  if (value.type === "question") {
+    const body = normalizeBlockContent(value.body, depth + 1, state);
+    const choices =
+      value.choices === null
+        ? null
+        : normalizeBlockContent(value.choices, depth + 1, state);
+    return body === value.body && choices === value.choices
+      ? value
+      : { ...value, body, choices };
+  }
+
+  const isBlockContainer =
+    value.type === "bulletList" ||
+    value.type === "orderedList" ||
+    value.type === "listItem" ||
+    value.type === "blockquote" ||
+    value.type === "callout" ||
+    value.type === "proof" ||
+    value.type === "table" ||
+    value.type === "tableRow" ||
+    value.type === "tableHeader" ||
+    value.type === "tableCell";
+  if (!isBlockContainer) return value;
+  const content = normalizeBlockContent(value.content, depth + 1, state);
+  return content === value.content ? value : { ...value, content };
+}
+
+function normalizeStructuredRoot(
+  value: unknown,
+  schemaVersion: "anvilnote.document.v1" | "anvilnote.fragment.v1",
+  type: "doc" | "fragment",
+  state: MissingMarksNormalizationState,
+): unknown {
+  if (
+    !isPlainRecord(value) ||
+    value.schemaVersion !== schemaVersion ||
+    value.type !== type
+  ) {
+    return value;
+  }
+  const content = normalizeBlockContent(value.content, 1, state);
+  return content === value.content ? value : { ...value, content };
+}
+
+/**
+ * Repairs only OpenAI's observed omission of `marks` on otherwise valid text
+ * nodes. This does not relax the provider schema: all other malformed values
+ * continue into the existing fail-closed Zod and public AST validation.
+ */
+export function normalizeMissingOpenAITextMarks(
+  value: unknown,
+): OpenAIMissingTextMarksNormalizationResult {
+  if (!isPlainRecord(value)) {
+    return { value, normalizedMissingMarksCount: 0 };
+  }
+
+  const hasDocument = Object.hasOwn(value, "document");
+  const hasReplacement = Object.hasOwn(value, "replacement");
+  if (hasDocument === hasReplacement) {
+    return { value, normalizedMissingMarksCount: 0 };
+  }
+
+  const state: MissingMarksNormalizationState = {
+    visitedNodes: 0,
+    normalizedMissingMarksCount: 0,
+    exceededLimits: false,
+  };
+  const rootKey = hasDocument ? "document" : "replacement";
+  const root = normalizeStructuredRoot(
+    value[rootKey],
+    hasDocument ? "anvilnote.document.v1" : "anvilnote.fragment.v1",
+    hasDocument ? "doc" : "fragment",
+    state,
+  );
+  if (state.exceededLimits || root === value[rootKey]) {
+    return { value, normalizedMissingMarksCount: 0 };
+  }
+  return {
+    value: { ...value, [rootKey]: root },
+    normalizedMissingMarksCount: state.normalizedMissingMarksCount,
+  };
+}
+
+const NULLABLE_IDENTIFIER_KEYS = new Set(["id", "equationNumber", "refName"]);
+
+/**
+ * Returns only an aggregate structural category for text-node marks. It never
+ * reads text, URLs, titles, or unknown values and is used only in the
+ * invalid-output logging path.
+ */
+export function getSafeOpenAITextMarksShape(
+  value: unknown,
+): SafeOpenAITextMarksShape | undefined {
+  const counts = getSafeOpenAITextMarksShapeCounts(value);
+  const shapes = SAFE_OPENAI_TEXT_MARKS_SHAPES.filter(
+    (shape) => counts?.[shape] !== undefined,
+  );
+  return shapes.length === 1 ? shapes[0] : undefined;
+}
+
+/**
+ * Aggregates only the structural marks representation found on text nodes.
+ * It deliberately excludes all model-authored text and mark attribute values.
+ */
+export function getSafeOpenAITextMarksShapeCounts(
+  value: unknown,
+): SafeOpenAITextMarksShapeCounts | undefined {
+  const counts: SafeOpenAITextMarksShapeCounts = {};
+
+  const visit = (nested: unknown): void => {
+    if (Array.isArray(nested)) {
+      for (const entry of nested) visit(entry);
+      return;
+    }
+    if (nested === null || typeof nested !== "object") return;
+    const record = nested as Record<string, unknown>;
+    if (record.type === "text") {
+      const shape: SafeOpenAITextMarksShape | undefined = !Object.hasOwn(
+        record,
+        "marks",
+      )
+        ? "missing"
+        : record.marks === null
+          ? "null"
+          : Array.isArray(record.marks)
+            ? "array"
+            : typeof record.marks === "object"
+              ? "object"
+              : undefined;
+      if (shape) counts[shape] = (counts[shape] ?? 0) + 1;
+    }
+    for (const nestedValue of Object.values(record)) visit(nestedValue);
+  };
+
+  visit(value);
+  return Object.keys(counts).length > 0 ? counts : undefined;
+}
+
+/**
+ * OpenAI strict Structured Outputs does not support minLength. It can
+ * therefore legally return an empty string for a nullable identifier even
+ * though the domain contract requires a non-empty identifier when present.
+ * Empty optional identifiers carry no information, so normalize only those
+ * allowlisted fields to null before provider-shape validation. Required text,
+ * URLs, code languages, and LaTeX remain fail-closed.
+ */
+function normalizeEmptyNullableIdentifiers(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeEmptyNullableIdentifiers);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [
+      key,
+      NULLABLE_IDENTIFIER_KEYS.has(key) &&
+      typeof nested === "string" &&
+      nested.trim().length === 0
+        ? null
+        : normalizeEmptyNullableIdentifiers(nested),
+    ]),
+  );
+}
+
+export function parseOpenAIModelPayloadWithNormalization(
+  outputSchemaId: OpenAIWriterOutputSchemaId,
+  value: unknown,
+): ParsedOpenAIModelPayload {
+  const missingMarksNormalized = normalizeMissingOpenAITextMarks(value);
+  const normalizedProviderValue = normalizeEmptyNullableIdentifiers(
+    missingMarksNormalized.value,
+  );
+  if (outputSchemaId === "anvilnote.ai.compose-result.v1") {
+    const payload = OpenAIComposePayloadV1Schema.parse(normalizedProviderValue);
+    return {
+      payload: NormalizedOpenAIComposePayloadV1Schema.parse({
+        suggestedTitle: payload.suggestedTitle,
+        document: removeNullOptionalProperties(
+          expandProviderQuestionWire(payload.document),
+        ),
+        summary: payload.summary,
+        warnings: payload.warnings,
+      }),
+      normalizedMissingMarksCount:
+        missingMarksNormalized.normalizedMissingMarksCount,
+    };
+  }
+
+  const payload = OpenAIRewritePayloadV1Schema.parse(normalizedProviderValue);
+  return {
+    payload: NormalizedOpenAIRewritePayloadV1Schema.parse({
+      replacement: removeNullOptionalProperties(
+        expandProviderQuestionWire(payload.replacement),
+      ),
+      changeSummary: payload.changeSummary,
+      preservedElements: payload.preservedElements,
+      warnings: payload.warnings,
+    }),
+    normalizedMissingMarksCount:
+      missingMarksNormalized.normalizedMissingMarksCount,
+  };
 }
 
 export function parseOpenAIModelPayload(
   outputSchemaId: OpenAIWriterOutputSchemaId,
   value: unknown,
 ): OpenAIModelPayloadV1 {
-  if (outputSchemaId === "anvilnote.ai.compose-result.v1") {
-    const payload = OpenAIComposePayloadV1Schema.parse(value);
-    return NormalizedOpenAIComposePayloadV1Schema.parse({
-      suggestedTitle: payload.suggestedTitle,
-      document: removeNullOptionalProperties(payload.document),
-      summary: payload.summary,
-      warnings: payload.warnings,
-    });
-  }
-
-  const payload = OpenAIRewritePayloadV1Schema.parse(value);
-  return NormalizedOpenAIRewritePayloadV1Schema.parse({
-    replacement: removeNullOptionalProperties(payload.replacement),
-    changeSummary: payload.changeSummary,
-    preservedElements: payload.preservedElements,
-    warnings: payload.warnings,
-  });
+  return parseOpenAIModelPayloadWithNormalization(outputSchemaId, value).payload;
 }
 
 export function validateNormalizedOpenAIModelPayload(

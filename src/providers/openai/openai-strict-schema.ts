@@ -151,7 +151,7 @@ export function validateOpenAIStrictSchema(
 export function getOpenAIModelPayloadFormat(
   outputSchemaId: OpenAIWriterOutputSchemaId,
 ): ResponseFormatTextJSONSchemaConfig {
-  const format =
+  const generated =
     outputSchemaId === "anvilnote.ai.compose-result.v1"
       ? zodTextFormat(
           OpenAIComposePayloadV1Schema,
@@ -161,7 +161,20 @@ export function getOpenAIModelPayloadFormat(
           OpenAIRewritePayloadV1Schema,
           "anvilnote_rewrite_payload_v1",
         );
-  format.schema = sanitizeOpenAIStrictSchema(format.schema);
-  validateOpenAIStrictSchema(format.schema);
-  return format;
+  const schema = sanitizeOpenAIStrictSchema(generated.schema);
+  validateOpenAIStrictSchema(schema);
+
+  // Do not return the helper's hidden `$parseRaw` hook. OpenAI strict mode
+  // supports a smaller JSON-Schema subset than the local Zod contract, so the
+  // transmitted schema intentionally omits constraints such as minLength.
+  // Let the SDK JSON.parse the payload first, then run our explicit
+  // normalization and full local Zod/semantic validation in
+  // parseOpenAIModelPayload().
+  return {
+    type: "json_schema",
+    name: generated.name,
+    strict: true,
+    schema,
+    ...(generated.description ? { description: generated.description } : {}),
+  };
 }

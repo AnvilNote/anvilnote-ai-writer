@@ -28,25 +28,42 @@ Every writer request uses the Responses API with:
 The connection test sends a separate minimal `{ "status": "ok" }` schema to
 the selected model. It has no user document, attachment, selection, or
 Humanizer content and does not retry. It is a real provider request when called
-by a future trusted integration and may incur a very small charge.
+by the trusted API/Desktop integration and may incur a very small charge.
 
 ## Strict schema adapter
 
-OpenAI SDK 6.48.0 officially supports the package's Zod 4 version. The provider
-uses `zodTextFormat()`, but it does not pass the domain AST schema directly:
-strict Structured Outputs requires all object fields to be required, while the
-domain AST has meaningful optional fields.
+OpenAI SDK 6.48.0 provides the Responses types and Zod schema generator. The
+provider does not pass the domain AST schema directly: strict Structured
+Outputs requires all object fields to be required, while the domain AST has
+meaningful optional fields.
 
 The wire representation therefore makes optional fields required and nullable.
-After the SDK parses the response, the adapter removes null optional AST
-properties and always runs local Zod, AST whitelist, URL, table, depth, node,
-and document-size validation. Recursive block nodes remain recursive through
-`$ref`. Before sending, the adapter removes SDK-emitted draft metadata and
-string-length keywords that are outside the documented provider subset. The
-same limits remain in the SDK parse hook and local Zod validation. Static tests
+Text marks use the same discriminated mark-array representation as the public
+AST; `null` means an unmarked text node. At the provider boundary, only the
+observed omission of `marks` on an otherwise valid text node is normalized to
+`null`; legacy flag objects and every other malformed mark shape remain
+invalid. Callout and Proof use their canonical public node shapes. Question is
+the one intentional depth adaptation: each OpenAI wire `question` represents
+one item with flattened semantic fields, direct `body`, and nullable `choices`.
+The adapter expands it into the public
+`question → questionItem → choiceList → choiceItem` hierarchy before the full
+public semantic validator runs. The SDK first parses JSON; the adapter
+normalizes only these allowlisted values and always runs local Zod, AST
+whitelist, URL, table, Question placement/kind, depth, node, and document-size
+validation. Recursive block nodes remain recursive through `$ref`. Before
+sending, the adapter removes SDK-emitted draft metadata and
+string-length keywords outside the provider subset. The helper's hidden eager
+Zod parse hook is excluded because normalization must precede the complete
+local contract. Static tests
 use an explicit supported-keyword allowlist and enforce an object root, full
 required lists, `additionalProperties: false`, at most 5,000 properties, and at
 most 10 schema nesting levels.
+
+Trusted output instructions distinguish Callout from quotation, Proof/QED from
+ordinary prose, all three Question kinds, and inline from display math. Proof
+labels/QED squares are never model-authored. Choice questions require at least
+two paragraph or math choices; written questions require `choices: null`.
+Image choices and statistics-chart generation are not in the wire schema.
 
 ## Trust assembly
 
@@ -83,13 +100,15 @@ eligible for logs or results, and values resembling API keys are rejected. The
 successful execution path prefers the SDK's `_request_id` instead of treating
 the response resource ID as an HTTP request ID.
 
-Only rate limits, transient network/timeouts, and invalid structured output can
-retry, at most once. Retry-After takes precedence over the small exponential
+Only rate limits, transient network/timeouts, HTTP 408/409/5xx provider
+failures, and invalid structured output can retry, at most once. Retry-After
+takes precedence over the small exponential
 backoff and jitter. Backoff is abortable. A request cancelled before execution
 never reaches the SDK; a response arriving after cancellation or deadline is
 discarded.
 
-When a retry follows an invalid output, network failure, or timeout, usage from
+When a retry follows an invalid output, network, timeout, or transient provider
+failure, usage from
 every potentially billable attempt cannot be proven. The successful result
 therefore reports unknown usage and cost instead of presenting only the final
 attempt as the operation total. A pure rate-limit retry retains final usage

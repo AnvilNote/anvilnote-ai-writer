@@ -12,6 +12,12 @@ test("AI AST nodes are classified as lossless round-trip", () => {
     "codeBlock",
     "inlineMath",
     "tableCell",
+    "callout",
+    "proof",
+    "question",
+    "questionItem",
+    "choiceList",
+    "choiceItem",
   ]) {
     assert.equal(getExistingNodePolicy(nodeName).behavior, "round-trip");
   }
@@ -34,15 +40,9 @@ test("custom and unknown nodes block selection rewriting explicitly", () => {
   for (const nodeName of [
     "image",
     "imageRow",
-    "callout",
-    "proof",
     "mermaid",
     "functionPlot",
     "statsChart",
-    "question",
-    "questionItem",
-    "choiceList",
-    "choiceItem",
     "questionBlank",
     "inlineBlank",
     "futureUnknownNode",

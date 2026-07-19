@@ -1,4 +1,9 @@
 import type { AnvilNoteMarkV1 } from "./marks-v1";
+import type { AnvilNoteCalloutKindV1 } from "./callouts-v1";
+import type {
+  AnvilNoteQuestionKindV1,
+  AnvilNoteWrittenModeV1,
+} from "./questions-v1";
 
 export interface AnvilNoteTextNodeV1 {
   type: "text";
@@ -75,6 +80,69 @@ export interface AnvilNoteMathBlockNodeV1 {
   };
 }
 
+export type AnvilNoteCalloutContentNodeV1 =
+  | AnvilNoteParagraphNodeV1
+  | AnvilNoteBulletListNodeV1
+  | AnvilNoteOrderedListNodeV1
+  | AnvilNoteCodeBlockNodeV1
+  | AnvilNoteMathBlockNodeV1;
+
+export interface AnvilNoteCalloutNodeV1 {
+  type: "callout";
+  attrs: {
+    kind: AnvilNoteCalloutKindV1;
+    title: string | null;
+  };
+  content: AnvilNoteCalloutContentNodeV1[];
+}
+
+export type AnvilNoteProofContentNodeV1 =
+  | AnvilNoteParagraphNodeV1
+  | AnvilNoteBulletListNodeV1
+  | AnvilNoteOrderedListNodeV1
+  | AnvilNoteCodeBlockNodeV1
+  | AnvilNoteMathBlockNodeV1;
+
+export interface AnvilNoteProofNodeV1 {
+  type: "proof";
+  content: AnvilNoteProofContentNodeV1[];
+}
+
+export type AnvilNoteQuestionBodyNodeV1 =
+  | AnvilNoteParagraphNodeV1
+  | AnvilNoteBulletListNodeV1
+  | AnvilNoteOrderedListNodeV1
+  | AnvilNoteCodeBlockNodeV1
+  | AnvilNoteMathBlockNodeV1;
+
+export interface AnvilNoteChoiceItemNodeV1 {
+  type: "choiceItem";
+  content: [AnvilNoteParagraphNodeV1 | AnvilNoteMathBlockNodeV1];
+}
+
+export interface AnvilNoteChoiceListNodeV1 {
+  type: "choiceList";
+  content: AnvilNoteChoiceItemNodeV1[];
+}
+
+export interface AnvilNoteQuestionItemNodeV1 {
+  type: "questionItem";
+  attrs: {
+    kind: AnvilNoteQuestionKindV1;
+    writtenMode: AnvilNoteWrittenModeV1;
+    writtenLines: number;
+    writtenHeightPercent: number;
+    writtenHeightCm: number | null;
+    multiForceOneColumn: boolean;
+  };
+  content: Array<AnvilNoteQuestionBodyNodeV1 | AnvilNoteChoiceListNodeV1>;
+}
+
+export interface AnvilNoteQuestionNodeV1 {
+  type: "question";
+  content: AnvilNoteQuestionItemNodeV1[];
+}
+
 export type AnvilNoteTableVariantV1 = "normal" | "three-line";
 export type AnvilNoteTableAlignV1 = "left" | "center" | "right";
 
@@ -132,6 +200,12 @@ export type AnvilNoteBlockNodeV1 =
   | AnvilNoteBlockquoteNodeV1
   | AnvilNoteCodeBlockNodeV1
   | AnvilNoteMathBlockNodeV1
+  | AnvilNoteCalloutNodeV1
+  | AnvilNoteProofNodeV1
+  | AnvilNoteQuestionNodeV1
+  | AnvilNoteQuestionItemNodeV1
+  | AnvilNoteChoiceListNodeV1
+  | AnvilNoteChoiceItemNodeV1
   | AnvilNoteTableNodeV1
   | AnvilNoteTableRowNodeV1
   | AnvilNoteTableHeaderNodeV1

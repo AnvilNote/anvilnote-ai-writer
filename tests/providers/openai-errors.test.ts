@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { z } from "zod";
 import { AIWriterError, normalizeOpenAIError } from "../../src/server/index";
 
 const context = {
@@ -25,6 +26,12 @@ test("OpenAI HTTP status and codes map to stable AnvilNote errors", () => {
       false,
     ],
     [{ status: 413, code: "request_too_large" }, "request_too_large", false],
+    [{ status: 408, code: "request_timeout" }, "provider_error", true],
+    [{ status: 409, code: "conflict" }, "provider_error", true],
+    [{ status: 500, code: "server_error" }, "provider_error", true],
+    [{ status: 502, code: "bad_gateway" }, "provider_error", true],
+    [{ status: 503, code: "service_unavailable" }, "provider_error", true],
+    [{ status: 504, code: "gateway_timeout" }, "provider_error", true],
   ] as const;
 
   for (const [raw, expectedCode, retryable] of cases) {
@@ -129,5 +136,47 @@ test("OpenAI request ID is retained only as safe diagnostic metadata", () => {
     },
     context,
   );
-  assert.deepEqual(error.details, { providerRequestId: "req_openai_safe" });
+  assert.deepEqual(error.details, {
+    providerRequestId: "req_openai_safe",
+    providerStatus: 429,
+    providerCode: "rate_limit_exceeded",
+  });
+});
+
+test("provider failures retain allowlisted upstream diagnostics without raw messages", () => {
+  const error = normalizeOpenAIError(
+    {
+      status: 400,
+      code: "invalid_value",
+      type: "invalid_request_error",
+      param: "text.format.schema",
+      message: "private prompt content must never be copied",
+    },
+    context,
+  );
+  assert.equal(error.code, "provider_error");
+  assert.deepEqual(error.details, {
+    providerStatus: 400,
+    providerCode: "invalid_value",
+    providerType: "invalid_request_error",
+    providerParam: "text.format.schema",
+  });
+  assert.doesNotMatch(JSON.stringify(error), /private prompt content/);
+});
+
+test("structured-output diagnostics retain only schema issue paths", () => {
+  const parsed = z
+    .object({ document: z.object({ content: z.array(z.string()).min(1) }) })
+    .safeParse({ document: { content: [] } });
+  assert.equal(parsed.success, false);
+  if (parsed.success) assert.fail();
+
+  const error = normalizeOpenAIError(parsed.error, context);
+  assert.equal(error.code, "invalid_structured_output");
+  assert.deepEqual(error.details, {
+    validationStage: "provider-payload",
+    validationIssuePaths: ["document.content"],
+  });
+  const serialized = JSON.stringify(error);
+  assert.doesNotMatch(serialized, /private|attachment|selected/i);
 });

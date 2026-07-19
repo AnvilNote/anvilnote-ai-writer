@@ -22,6 +22,14 @@ function safeString(value: unknown): string {
   return typeof value === "string" ? value.toLowerCase() : "";
 }
 
+function safeDiagnosticToken(value: unknown): string | undefined {
+  return typeof value === "string" &&
+    value.length <= 128 &&
+    /^[A-Za-z0-9_.:-]+$/.test(value)
+    ? value
+    : undefined;
+}
+
 export function sanitizeOpenAIDiagnosticId(value: unknown): string | undefined {
   if (
     typeof value !== "string" ||
@@ -65,11 +73,37 @@ export function normalizeOpenAIError(
     safeString(record.message) || safeString((rawError as Error)?.message);
   const retryAfterMs = parseRetryAfterMs(record.headers);
   const providerRequestId = sanitizeOpenAIDiagnosticId(record.requestID);
+  const providerCode = safeDiagnosticToken(record.code);
+  const providerType = safeDiagnosticToken(record.type);
+  const providerParam = safeDiagnosticToken(record.param);
+  const validationDetails =
+    rawError instanceof z.ZodError
+      ? {
+          validationStage: "provider-payload",
+          validationIssuePaths: [
+            ...new Set(
+              rawError.issues.map((issue) =>
+                issue.path.length > 0 ? issue.path.join(".") : "root",
+              ),
+            ),
+          ].slice(0, 8),
+        }
+      : undefined;
+  const safeDetails = {
+    ...(providerRequestId ? { providerRequestId } : {}),
+    ...(status !== undefined && status >= 100 && status <= 599
+      ? { providerStatus: status }
+      : {}),
+    ...(providerCode ? { providerCode } : {}),
+    ...(providerType ? { providerType } : {}),
+    ...(providerParam ? { providerParam } : {}),
+    ...validationDetails,
+  };
   const base = {
     provider: "openai",
     model: context.model,
     ...(context.requestId ? { requestId: context.requestId } : {}),
-    ...(providerRequestId ? { details: { providerRequestId } } : {}),
+    ...(Object.keys(safeDetails).length > 0 ? { details: safeDetails } : {}),
   };
 
   const create = (
@@ -134,6 +168,9 @@ export function normalizeOpenAIError(
     /connection error|network error|fetch failed/.test(message)
   ) {
     return create("network_error", true);
+  }
+  if (status === 408 || status === 409 || (status !== undefined && status >= 500)) {
+    return create("provider_error", true);
   }
   return create(
     status !== undefined ? "provider_error" : "unknown_error",

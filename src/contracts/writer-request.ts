@@ -9,6 +9,10 @@ import {
   AI_ATTACHMENT_LIMITS,
   type AttachmentContext,
 } from "./attachment-context";
+import {
+  ConversationPromptContextSchema,
+  type ConversationPromptContext,
+} from "./conversation";
 import type { AIProviderCredential } from "./provider";
 import type { AIWriterIntent, WritingStyle } from "./writer-intent";
 
@@ -28,6 +32,7 @@ export interface AIWriterRequest {
     currentDocument?: AnvilNoteDocumentV1;
     selectedContent?: AnvilNoteDocumentFragmentV1;
     attachments?: AttachmentContext[];
+    conversation?: ConversationPromptContext;
   };
   options: {
     humanizerEnabled: boolean;
@@ -89,6 +94,7 @@ export const AIWriterRequestSchema: z.ZodType<AIWriterRequest> = z
           .array(attachmentContextSchema)
           .max(AI_ATTACHMENT_LIMITS.maxFiles)
           .optional(),
+        conversation: ConversationPromptContextSchema.optional(),
       })
       .strict(),
     options: z

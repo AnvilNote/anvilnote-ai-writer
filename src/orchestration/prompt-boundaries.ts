@@ -25,7 +25,12 @@ export function createPromptBoundary({
 }
 
 export type UntrustedPromptDataKind =
-  "ATTACHMENT" | "CONTEXT" | "CURRENT_DOCUMENT" | "INSTRUCTION" | "SELECTION";
+  | "ATTACHMENT"
+  | "CONTEXT"
+  | "CONVERSATION_HISTORY"
+  | "CURRENT_DOCUMENT"
+  | "INSTRUCTION"
+  | "SELECTION";
 
 export interface WrapUntrustedPromptDataInput {
   requestId: string;
