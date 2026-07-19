@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { z } from "zod";
 import type {
   ResponseCreateParamsNonStreaming,
   ResponseUsage,
@@ -31,6 +32,8 @@ import {
 } from "./openai-errors";
 import {
   parseOpenAIModelPayload,
+  getSafeOpenAITextMarksShape,
+  type SafeOpenAITextMarksShape,
   validateNormalizedOpenAIModelPayload,
 } from "./openai-model-payload";
 import { normalizeOpenAIUsage } from "./openai-usage";
@@ -92,6 +95,7 @@ export interface SafeOpenAIExecutionLogMetadata {
   providerType?: string;
   providerParam?: string;
   validationIssuePaths?: string[];
+  marksShape?: SafeOpenAITextMarksShape;
 }
 
 export function toSafeOpenAIExecutionLogMetadata(
@@ -230,17 +234,53 @@ function parseCompletedPayload(
       }),
     );
   }
-  if (request.outputSchemaId === "anvilnote.ai.compose-result.v1") {
-    return parseOpenAIModelPayload(
-      "anvilnote.ai.compose-result.v1",
-      response.output_parsed,
-    );
-  }
-  if (request.outputSchemaId === "anvilnote.ai.rewrite-result.v1") {
-    return parseOpenAIModelPayload(
-      "anvilnote.ai.rewrite-result.v1",
-      response.output_parsed,
-    );
+  try {
+    if (request.outputSchemaId === "anvilnote.ai.compose-result.v1") {
+      return parseOpenAIModelPayload(
+        "anvilnote.ai.compose-result.v1",
+        response.output_parsed,
+      );
+    }
+    if (request.outputSchemaId === "anvilnote.ai.rewrite-result.v1") {
+      return parseOpenAIModelPayload(
+        "anvilnote.ai.rewrite-result.v1",
+        response.output_parsed,
+      );
+    }
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const validationIssuePaths = [
+        ...new Set(
+          error.issues.map((issue) =>
+            issue.path.length > 0 ? issue.path.join(".") : "root",
+          ),
+        ),
+      ].slice(0, 8);
+      const hasMarksIssue = error.issues.some(
+        (issue) => issue.path.at(-1) === "marks",
+      );
+      throw new AIWriterError(
+        createAIWriterErrorShape("invalid_structured_output", {
+          retryable: true,
+          provider: "openai",
+          model: request.provider.model,
+          requestId: request.requestId,
+          details: {
+            validationStage: "provider-payload",
+            validationIssuePaths,
+            ...(hasMarksIssue
+              ? (() => {
+                  const marksShape = getSafeOpenAITextMarksShape(
+                    response.output_parsed,
+                  );
+                  return marksShape ? { marksShape } : {};
+                })()
+              : {}),
+          },
+        }),
+      );
+    }
+    throw error;
   }
   throw new AIWriterError(
     createAIWriterErrorShape("invalid_request_schema", {
@@ -412,8 +452,18 @@ export class OpenAIProviderAdapter implements AIProviderAdapter {
                       error.details.validationIssuePaths.filter(
                         (path): path is string => typeof path === "string",
                       ),
-                  }
+                }
                 : {}),
+              ...(
+                (["missing", "null", "array", "object"] as const).includes(
+                  error.details?.marksShape as SafeOpenAITextMarksShape,
+                )
+                  ? {
+                      marksShape:
+                        error.details?.marksShape as SafeOpenAITextMarksShape,
+                    }
+                  : {}
+              ),
             }),
           );
           if (attempt >= 2 || !error.retryable || abortContext.signal.aborted) {

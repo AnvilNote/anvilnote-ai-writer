@@ -1,7 +1,10 @@
 import { z } from "zod";
 import type { AnvilNoteDocumentV1 } from "./document-v1";
 import type { AnvilNoteDocumentFragmentV1 } from "./fragment-v1";
-import type { AnvilNoteMarkV1 } from "./marks-v1";
+import {
+  ANVIL_NOTE_SIMPLE_MARK_TYPES,
+  type AnvilNoteMarkV1,
+} from "./marks-v1";
 import type { AnvilNoteBlockNodeV1, AnvilNoteInlineNodeV1 } from "./nodes-v1";
 import {
   addDocumentLimitIssues,
@@ -9,7 +12,7 @@ import {
   addTableGeometryIssues,
 } from "./validators";
 
-const simpleMarkSchemas = ["bold", "italic", "strike", "code", "underline"].map(
+const simpleMarkSchemas = ANVIL_NOTE_SIMPLE_MARK_TYPES.map(
   (type) => z.object({ type: z.literal(type) }).strict(),
 );
 

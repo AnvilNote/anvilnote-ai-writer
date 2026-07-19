@@ -138,7 +138,7 @@ test("empty nullable identifiers from the provider normalize to absence", () => 
   ]);
 });
 
-test("provider mark flags normalize into a unique domain mark array", () => {
+test("provider wire payload accepts public mark arrays and normalizes null marks", () => {
   const parsed = parseOpenAIModelPayload("anvilnote.ai.compose-result.v1", {
     ...composePayload,
     document: {
@@ -150,14 +150,22 @@ test("provider mark flags normalize into a unique domain mark array", () => {
             {
               type: "text",
               text: "Emphasis",
-              marks: {
-                bold: true,
-                italic: false,
-                strike: false,
-                code: false,
-                underline: false,
-                link: null,
-              },
+              marks: [{ type: "bold" }],
+            },
+            { type: "text", text: " and link", marks: null },
+            {
+              type: "text",
+              text: "source",
+              marks: [
+                {
+                  type: "link",
+                  attrs: {
+                    href: "https://example.com/source",
+                    title: null,
+                    target: null,
+                  },
+                },
+              ],
             },
           ],
         },
@@ -168,11 +176,45 @@ test("provider mark flags normalize into a unique domain mark array", () => {
   if (!("document" in parsed)) assert.fail("expected compose payload");
   assert.deepEqual(parsed.document.content[0], {
     type: "paragraph",
-    content: [{ type: "text", text: "Emphasis", marks: [{ type: "bold" }] }],
+    content: [
+      { type: "text", text: "Emphasis", marks: [{ type: "bold" }] },
+      { type: "text", text: " and link" },
+      {
+        type: "text",
+        text: "source",
+        marks: [
+          {
+            type: "link",
+            attrs: { href: "https://example.com/source" },
+          },
+        ],
+      },
+    ],
   });
 });
 
-test("provider wire format rejects ambiguous mark arrays", () => {
+test("provider wire payload normalizes empty mark arrays to omitted public marks", () => {
+  const parsed = parseOpenAIModelPayload("anvilnote.ai.compose-result.v1", {
+    ...composePayload,
+    document: {
+      ...composePayload.document,
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "Plain text", marks: [] }],
+        },
+      ],
+    },
+  });
+  assert.ok("document" in parsed);
+  if (!("document" in parsed)) assert.fail("expected compose payload");
+  assert.deepEqual(parsed.document.content[0], {
+    type: "paragraph",
+    content: [{ type: "text", text: "Plain text" }],
+  });
+});
+
+test("provider wire payload rejects legacy flag-object marks", () => {
   assert.throws(() =>
     parseOpenAIModelPayload("anvilnote.ai.compose-result.v1", {
       ...composePayload,
@@ -184,13 +226,15 @@ test("provider wire format rejects ambiguous mark arrays", () => {
             content: [
               {
                 type: "text",
-                text: "Links",
-                marks: [
-                  {
-                    type: "link",
-                    attrs: { href: "https://one.example", title: null, target: null },
-                  },
-                ],
+                text: "Legacy",
+                marks: {
+                  bold: true,
+                  italic: false,
+                  strike: false,
+                  code: false,
+                  underline: false,
+                  link: null,
+                },
               },
             ],
           },
@@ -198,6 +242,33 @@ test("provider wire format rejects ambiguous mark arrays", () => {
       },
     }),
   );
+});
+
+test("provider wire payload rejects duplicate or unsafe public marks", () => {
+  for (const marks of [
+    [{ type: "bold" }, { type: "bold" }],
+    [
+      {
+        type: "link",
+        attrs: { href: "javascript:alert(1)", title: null, target: null },
+      },
+    ],
+  ]) {
+    assert.throws(() =>
+      parseOpenAIModelPayload("anvilnote.ai.compose-result.v1", {
+        ...composePayload,
+        document: {
+          ...composePayload.document,
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: "unsafe", marks }],
+            },
+          ],
+        },
+      }),
+    );
+  }
 });
 
 test("model payload rejects extra metadata and invalid domain content", () => {
@@ -224,13 +295,8 @@ test("model payload rejects extra metadata and invalid domain content", () => {
                 {
                   type: "text",
                   text: "unsafe",
-                  marks: {
-                    bold: false,
-                    italic: false,
-                    strike: false,
-                    code: false,
-                    underline: false,
-                    link: {
+                  marks: [
+                    {
                       type: "link",
                       attrs: {
                         href: "javascript:alert(1)",
@@ -238,7 +304,7 @@ test("model payload rejects extra metadata and invalid domain content", () => {
                         target: null,
                       },
                     },
-                  },
+                  ],
                 },
               ],
             },

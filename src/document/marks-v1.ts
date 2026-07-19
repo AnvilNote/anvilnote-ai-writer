@@ -1,3 +1,11 @@
+export const ANVIL_NOTE_SIMPLE_MARK_TYPES = [
+  "bold",
+  "italic",
+  "strike",
+  "code",
+  "underline",
+] as const;
+
 export interface AnvilNoteBoldMarkV1 {
   type: "bold";
 }

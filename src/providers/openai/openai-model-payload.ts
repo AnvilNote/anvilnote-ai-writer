@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  ANVIL_NOTE_SIMPLE_MARK_TYPES,
   AnvilNoteDocumentFragmentV1Schema,
   AnvilNoteDocumentV1Schema,
 } from "../../document/index";
@@ -16,6 +17,8 @@ export type OpenAIComposePayloadV1 = ComposeModelPayloadV1;
 export type OpenAIRewritePayloadV1 = RewriteModelPayloadV1;
 export type OpenAIModelPayloadV1 = WriterModelPayloadV1;
 
+export type SafeOpenAITextMarksShape = "missing" | "null" | "array" | "object";
+
 const linkMarkSchema = z
   .object({
     type: z.literal("link"),
@@ -29,21 +32,27 @@ const linkMarkSchema = z
   })
   .strict();
 
+const simpleMarkSchemas = ANVIL_NOTE_SIMPLE_MARK_TYPES.map(
+  (type) => z.object({ type: z.literal(type) }).strict(),
+);
+
+/**
+ * This mirrors the public AnvilNote mark union. The only wire adaptation is
+ * that link `title` and `target` are required nullable values so the emitted
+ * JSON Schema complies with OpenAI strict Structured Outputs requirements.
+ * `removeNullOptionalProperties()` restores the public optional shape before
+ * the public AST schema performs the final semantic validation.
+ */
+const providerTextMarkSchema = z.union([...simpleMarkSchemas, linkMarkSchema]);
 const providerTextMarksSchema = z
-  .object({
-    bold: z.boolean(),
-    italic: z.boolean(),
-    strike: z.boolean(),
-    code: z.boolean(),
-    underline: z.boolean(),
-    link: linkMarkSchema.nullable(),
-  })
-  .strict();
+  .array(providerTextMarkSchema)
+  .max(16)
+  .nullable();
 const textNodeSchema = z
   .object({
     type: z.literal("text"),
     text: z.string().min(1).max(250_000),
-    marks: providerTextMarksSchema.nullable(),
+    marks: providerTextMarksSchema,
   })
   .strict();
 const hardBreakNodeSchema = z.object({ type: z.literal("hardBreak") }).strict();
@@ -282,44 +291,49 @@ function removeNullOptionalProperties(value: unknown): unknown {
       .filter(([, nested]) => nested !== null)
       .map(([key, nested]) => [key, removeNullOptionalProperties(nested)]),
   );
-  if (normalized.type === "text" && Array.isArray(normalized.marks)) {
-    const uniqueMarks: unknown[] = [];
-    const exactMarks = new Set<string>();
-    for (const mark of normalized.marks) {
-      const key = JSON.stringify(mark);
-      if (!exactMarks.has(key)) {
-        exactMarks.add(key);
-        uniqueMarks.push(mark);
-      }
-    }
-    return { ...normalized, marks: uniqueMarks };
+  if (
+    normalized.type === "text" &&
+    Array.isArray(normalized.marks) &&
+    normalized.marks.length === 0
+  ) {
+    return Object.fromEntries(
+      Object.entries(normalized).filter(([key]) => key !== "marks"),
+    );
   }
   return normalized;
 }
 
-function convertProviderMarks(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(convertProviderMarks);
-  if (value === null || typeof value !== "object") return value;
-  const converted = Object.fromEntries(
-    Object.entries(value).map(([key, nested]) => [key, convertProviderMarks(nested)]),
-  );
-  if (
-    converted.type !== "text" ||
-    converted.marks === null ||
-    typeof converted.marks !== "object" ||
-    Array.isArray(converted.marks)
-  ) {
-    return converted;
-  }
-  const marksRecord = converted.marks as Record<string, unknown>;
-  const marks = ["bold", "italic", "strike", "code", "underline"]
-    .filter((type) => marksRecord[type] === true)
-    .map((type) => ({ type }));
-  if (marksRecord.link !== null) marks.push(marksRecord.link as { type: string });
-  return { ...converted, marks: marks.length > 0 ? marks : null };
-}
-
 const NULLABLE_IDENTIFIER_KEYS = new Set(["id", "equationNumber", "refName"]);
+
+/**
+ * Returns only an aggregate structural category for text-node marks. It never
+ * reads text, URLs, titles, or unknown values and is used only in the
+ * invalid-output logging path.
+ */
+export function getSafeOpenAITextMarksShape(
+  value: unknown,
+): SafeOpenAITextMarksShape | undefined {
+  const shapes = new Set<SafeOpenAITextMarksShape>();
+
+  const visit = (nested: unknown): void => {
+    if (Array.isArray(nested)) {
+      for (const entry of nested) visit(entry);
+      return;
+    }
+    if (nested === null || typeof nested !== "object") return;
+    const record = nested as Record<string, unknown>;
+    if (record.type === "text") {
+      if (!("marks" in record)) shapes.add("missing");
+      else if (record.marks === null) shapes.add("null");
+      else if (Array.isArray(record.marks)) shapes.add("array");
+      else if (typeof record.marks === "object") shapes.add("object");
+    }
+    for (const nestedValue of Object.values(record)) visit(nestedValue);
+  };
+
+  visit(value);
+  return shapes.size === 1 ? [...shapes][0] : undefined;
+}
 
 /**
  * OpenAI strict Structured Outputs does not support minLength. It can
@@ -353,7 +367,7 @@ export function parseOpenAIModelPayload(
     const payload = OpenAIComposePayloadV1Schema.parse(normalizedProviderValue);
     return NormalizedOpenAIComposePayloadV1Schema.parse({
       suggestedTitle: payload.suggestedTitle,
-      document: removeNullOptionalProperties(convertProviderMarks(payload.document)),
+      document: removeNullOptionalProperties(payload.document),
       summary: payload.summary,
       warnings: payload.warnings,
     });
@@ -361,7 +375,7 @@ export function parseOpenAIModelPayload(
 
   const payload = OpenAIRewritePayloadV1Schema.parse(normalizedProviderValue);
   return NormalizedOpenAIRewritePayloadV1Schema.parse({
-    replacement: removeNullOptionalProperties(convertProviderMarks(payload.replacement)),
+    replacement: removeNullOptionalProperties(payload.replacement),
     changeSummary: payload.changeSummary,
     preservedElements: payload.preservedElements,
     warnings: payload.warnings,

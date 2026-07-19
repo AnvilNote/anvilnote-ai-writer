@@ -19,7 +19,24 @@ const modelPayload = {
     content: [
       {
         type: "paragraph",
-        content: [{ type: "text", text: "Generated text.", marks: null }],
+        content: [
+          { type: "text", text: "Generated ", marks: null },
+          { type: "text", text: "text", marks: [{ type: "bold" }] },
+          {
+            type: "text",
+            text: ".",
+            marks: [
+              {
+                type: "link",
+                attrs: {
+                  href: "https://example.com/source",
+                  title: null,
+                  target: null,
+                },
+              },
+            ],
+          },
+        ],
       },
     ],
   },
@@ -99,7 +116,20 @@ test("provider executes through an injected short-lived official client boundary
   assert.deepEqual(result.payload.document.content, [
     {
       type: "paragraph",
-      content: [{ type: "text", text: "Generated text." }],
+      content: [
+        { type: "text", text: "Generated " },
+        { type: "text", text: "text", marks: [{ type: "bold" }] },
+        {
+          type: "text",
+          text: ".",
+          marks: [
+            {
+              type: "link",
+              attrs: { href: "https://example.com/source" },
+            },
+          ],
+        },
+      ],
     },
   ]);
   assert.equal(result.usage.cachedInputTokens, 20);
@@ -187,6 +217,45 @@ test("invalid structured output retries once, then stops", async () => {
       error instanceof AIWriterError &&
       error.code === "invalid_structured_output",
   );
+});
+
+test("invalid mark payload logs only aggregate safe shape diagnostics", async () => {
+  const logged: unknown[] = [];
+  const sourceText = "private source text must never reach logs";
+  const malformedPayload = {
+    ...modelPayload,
+    document: {
+      ...modelPayload.document,
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: sourceText }],
+        },
+      ],
+    },
+  };
+  const adapter = new OpenAIProviderAdapter({
+    clientFactory: () => ({
+      responses: { parse: async () => completedResponse(malformedPayload) },
+    }),
+    logger: (metadata) => logged.push(metadata),
+    sleep: async () => undefined,
+    random: () => 0,
+  });
+
+  await assert.rejects(
+    adapter.execute(createPreparedRequest(), { apiKey: secret }),
+    (error) =>
+      error instanceof AIWriterError && error.code === "invalid_structured_output",
+  );
+
+  assert.equal(logged.length, 2);
+  for (const entry of logged) {
+    assert.equal((entry as { marksShape?: unknown }).marksShape, "missing");
+  }
+  const serialized = JSON.stringify(logged);
+  assert.equal(serialized.includes(sourceText), false);
+  assert.equal(serialized.includes(secret), false);
 });
 
 test("permanent credential errors never retry", async () => {
