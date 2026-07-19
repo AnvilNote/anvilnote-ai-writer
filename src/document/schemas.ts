@@ -5,6 +5,11 @@ import {
   ANVIL_NOTE_SIMPLE_MARK_TYPES,
   type AnvilNoteMarkV1,
 } from "./marks-v1";
+import { ANVIL_NOTE_CALLOUT_KINDS } from "./callouts-v1";
+import {
+  ANVIL_NOTE_QUESTION_KINDS,
+  ANVIL_NOTE_WRITTEN_MODES,
+} from "./questions-v1";
 import type { AnvilNoteBlockNodeV1, AnvilNoteInlineNodeV1 } from "./nodes-v1";
 import {
   addDocumentLimitIssues,
@@ -181,6 +186,124 @@ const mathBlockSchema = z
   })
   .strict();
 
+const calloutSchema = z
+  .object({
+    type: z.literal("callout"),
+    attrs: z
+      .object({
+        kind: z.enum(ANVIL_NOTE_CALLOUT_KINDS),
+        title: z.string().trim().min(1).max(1_024).nullable(),
+      })
+      .strict(),
+    content: z.array(blockReference).min(1).max(1_000),
+  })
+  .strict();
+
+const proofSchema = z
+  .object({
+    type: z.literal("proof"),
+    content: z.array(blockReference).min(1).max(1_000),
+  })
+  .strict();
+
+const choiceItemSchema = z
+  .object({
+    type: z.literal("choiceItem"),
+    content: z.array(z.union([paragraphSchema, mathBlockSchema])).length(1),
+  })
+  .strict();
+
+const choiceListSchema = z
+  .object({
+    type: z.literal("choiceList"),
+    content: z.array(choiceItemSchema).min(2).max(100),
+  })
+  .strict();
+
+const questionItemAttributesSchema = z
+  .object({
+    kind: z.enum(ANVIL_NOTE_QUESTION_KINDS),
+    writtenMode: z.enum(ANVIL_NOTE_WRITTEN_MODES),
+    writtenLines: z.number().int().min(1).max(100),
+    writtenHeightPercent: z.number().min(5).max(100),
+    writtenHeightCm: z.number().positive().max(1_000).nullable(),
+    multiForceOneColumn: z.boolean(),
+  })
+  .strict();
+
+const QUESTION_BODY_TYPES = new Set([
+  "paragraph",
+  "bulletList",
+  "orderedList",
+  "codeBlock",
+  "mathBlock",
+]);
+
+const questionItemSchema = z
+  .object({
+    type: z.literal("questionItem"),
+    attrs: questionItemAttributesSchema,
+    content: z.array(blockReference).min(1).max(1_000),
+  })
+  .strict()
+  .superRefine((item, context) => {
+    const choiceIndexes: number[] = [];
+    for (const [index, child] of item.content.entries()) {
+      if (child.type === "choiceList") {
+        choiceIndexes.push(index);
+      } else if (!QUESTION_BODY_TYPES.has(child.type)) {
+        context.addIssue({
+          code: "custom",
+          path: ["content", index],
+          message: `${child.type} is not allowed in a question body.`,
+        });
+      }
+    }
+
+    const bodyCount = item.content.length - choiceIndexes.length;
+    if (bodyCount < 1) {
+      context.addIssue({
+        code: "custom",
+        path: ["content"],
+        message: "A question item requires at least one body block.",
+      });
+    }
+
+    if (item.attrs.kind === "written") {
+      if (choiceIndexes.length > 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["content", choiceIndexes[0]],
+          message: "A written question cannot contain choices.",
+        });
+      }
+      return;
+    }
+
+    if (choiceIndexes.length !== 1) {
+      context.addIssue({
+        code: "custom",
+        path: ["content"],
+        message: "A choice question requires exactly one choice list.",
+      });
+      return;
+    }
+    if (choiceIndexes[0] !== item.content.length - 1) {
+      context.addIssue({
+        code: "custom",
+        path: ["content", choiceIndexes[0]],
+        message: "A choice list must be the final question-item child.",
+      });
+    }
+  });
+
+const questionSchema = z
+  .object({
+    type: z.literal("question"),
+    content: z.array(questionItemSchema).min(1).max(100),
+  })
+  .strict();
+
 const tableCellAttributesSchema = z
   .object({
     colspan: z.number().int().min(1).max(100),
@@ -271,6 +394,12 @@ blockNodeSchema = z.discriminatedUnion("type", [
   blockquoteSchema,
   codeBlockSchema,
   mathBlockSchema,
+  calloutSchema,
+  proofSchema,
+  questionSchema,
+  questionItemSchema,
+  choiceListSchema,
+  choiceItemSchema,
   tableSchema,
   tableRowSchema,
   tableHeaderSchema,

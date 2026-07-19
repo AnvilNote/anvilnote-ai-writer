@@ -37,6 +37,12 @@ function childBlocks(node: AnvilNoteBlockNodeV1): AnvilNoteBlockNodeV1[] {
       return node.content;
     case "listItem":
     case "blockquote":
+    case "callout":
+    case "proof":
+    case "question":
+    case "questionItem":
+    case "choiceList":
+    case "choiceItem":
     case "tableCell":
     case "tableHeader":
       return node.content;
@@ -69,6 +75,8 @@ function measureBlockNode(
       measureInlineNode(textNode, depth + 1, metrics);
   } else if (node.type === "mathBlock") {
     metrics.textCharacters += node.attrs.latex.length;
+  } else if (node.type === "callout" && node.attrs.title !== null) {
+    metrics.textCharacters += node.attrs.title.length;
   }
 
   for (const child of childBlocks(node))
@@ -112,11 +120,31 @@ export function addDocumentLimitIssues(
 
 type StructuralParent = "root" | AnvilNoteBlockNodeV1["type"];
 
+const CALLOUT_DESCENDANT_TYPES = new Set<AnvilNoteBlockNodeV1["type"]>([
+  "paragraph",
+  "bulletList",
+  "orderedList",
+  "listItem",
+  "codeBlock",
+  "mathBlock",
+]);
+
+const PROOF_DESCENDANT_TYPES = new Set<AnvilNoteBlockNodeV1["type"]>([
+  "paragraph",
+  "bulletList",
+  "orderedList",
+  "listItem",
+  "codeBlock",
+  "mathBlock",
+]);
+
 function validateBlockPlacement(
   node: AnvilNoteBlockNodeV1,
   parent: StructuralParent,
   path: Array<string | number>,
   context: z.core.$RefinementCtx,
+  withinCallout = false,
+  withinProof = false,
 ): void {
   const requiredParent =
     node.type === "listItem"
@@ -125,7 +153,15 @@ function validateBlockPlacement(
         ? new Set<StructuralParent>(["table"])
         : node.type === "tableHeader" || node.type === "tableCell"
           ? new Set<StructuralParent>(["tableRow"])
-          : null;
+          : node.type === "question"
+            ? new Set<StructuralParent>(["root"])
+            : node.type === "questionItem"
+              ? new Set<StructuralParent>(["question"])
+              : node.type === "choiceList"
+                ? new Set<StructuralParent>(["questionItem"])
+                : node.type === "choiceItem"
+                  ? new Set<StructuralParent>(["choiceList"])
+                  : null;
 
   if (requiredParent && !requiredParent.has(parent)) {
     context.addIssue({
@@ -136,12 +172,32 @@ function validateBlockPlacement(
     return;
   }
 
+  if (withinCallout && !CALLOUT_DESCENDANT_TYPES.has(node.type)) {
+    context.addIssue({
+      code: "custom",
+      path,
+      message: `${node.type} is not allowed inside callout.`,
+    });
+    return;
+  }
+
+  if (withinProof && !PROOF_DESCENDANT_TYPES.has(node.type)) {
+    context.addIssue({
+      code: "custom",
+      path,
+      message: `${node.type} is not allowed inside proof.`,
+    });
+    return;
+  }
+
   for (const [index, child] of childBlocks(node).entries()) {
     validateBlockPlacement(
       child,
       node.type,
       [...path, "content", index],
       context,
+      withinCallout || node.type === "callout",
+      withinProof || node.type === "proof",
     );
   }
 }

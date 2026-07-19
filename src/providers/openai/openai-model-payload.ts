@@ -1,7 +1,10 @@
 import { z } from "zod";
 import {
   AI_DOCUMENT_LIMITS,
+  ANVIL_NOTE_CALLOUT_KINDS,
+  ANVIL_NOTE_QUESTION_KINDS,
   ANVIL_NOTE_SIMPLE_MARK_TYPES,
+  ANVIL_NOTE_WRITTEN_MODES,
   AnvilNoteDocumentFragmentV1Schema,
   AnvilNoteDocumentV1Schema,
 } from "../../document/index";
@@ -170,6 +173,65 @@ const mathBlockSchema = z
       .strict(),
   })
   .strict();
+const calloutSchema = z
+  .object({
+    type: z.literal("callout"),
+    attrs: z
+      .object({
+        kind: z.enum(ANVIL_NOTE_CALLOUT_KINDS),
+        title: z.string().min(1).max(1_024).nullable(),
+      })
+      .strict(),
+    content: z
+      .array(
+        z.union([
+          paragraphSchema,
+          bulletListSchema,
+          orderedListSchema,
+          codeBlockSchema,
+          mathBlockSchema,
+        ]),
+      )
+      .min(1)
+      .max(1_000),
+  })
+  .strict();
+const providerSupportedContainerContentSchema = z.union([
+  paragraphSchema,
+  bulletListSchema,
+  orderedListSchema,
+  codeBlockSchema,
+  mathBlockSchema,
+]);
+const proofSchema = z
+  .object({
+    type: z.literal("proof"),
+    content: z
+      .array(providerSupportedContainerContentSchema)
+      .min(1)
+      .max(1_000),
+  })
+  .strict();
+const questionSchema = z
+  .object({
+    type: z.literal("question"),
+    kind: z.enum(ANVIL_NOTE_QUESTION_KINDS),
+    writtenMode: z.enum(ANVIL_NOTE_WRITTEN_MODES),
+    writtenLines: z.number().int().min(1).max(100),
+    writtenHeightPercent: z.number().min(5).max(100),
+    writtenHeightCm: z.number().positive().max(1_000).nullable(),
+    multiForceOneColumn: z.boolean(),
+    body: z
+      .array(providerSupportedContainerContentSchema)
+      .min(1)
+      .max(1_000),
+    choices: z
+      .array(z.union([paragraphSchema, mathBlockSchema]))
+      .min(2)
+      .max(100)
+      .nullable(),
+  })
+  .strict();
 const tableCellAttributesSchema = z
   .object({
     colspan: z.number().int().min(1).max(100),
@@ -242,6 +304,9 @@ blockNodeSchema = z.discriminatedUnion("type", [
   blockquoteSchema,
   codeBlockSchema,
   mathBlockSchema,
+  calloutSchema,
+  proofSchema,
+  questionSchema,
   tableSchema,
   tableRowSchema,
   tableHeaderSchema,
@@ -312,6 +377,40 @@ function removeNullOptionalProperties(value: unknown): unknown {
       .filter(([, nested]) => nested !== null)
       .map(([key, nested]) => [key, removeNullOptionalProperties(nested)]),
   );
+  const original = value as Record<string, unknown>;
+  if (
+    normalized.type === "callout" &&
+    original.attrs !== null &&
+    typeof original.attrs === "object" &&
+    !Array.isArray(original.attrs) &&
+    (original.attrs as Record<string, unknown>).title === null
+  ) {
+    const normalizedAttrs =
+      normalized.attrs !== null &&
+      typeof normalized.attrs === "object" &&
+      !Array.isArray(normalized.attrs)
+        ? (normalized.attrs as Record<string, unknown>)
+        : {};
+    return { ...normalized, attrs: { ...normalizedAttrs, title: null } };
+  }
+  if (
+    normalized.type === "questionItem" &&
+    original.attrs !== null &&
+    typeof original.attrs === "object" &&
+    !Array.isArray(original.attrs) &&
+    (original.attrs as Record<string, unknown>).writtenHeightCm === null
+  ) {
+    const normalizedAttrs =
+      normalized.attrs !== null &&
+      typeof normalized.attrs === "object" &&
+      !Array.isArray(normalized.attrs)
+        ? (normalized.attrs as Record<string, unknown>)
+        : {};
+    return {
+      ...normalized,
+      attrs: { ...normalizedAttrs, writtenHeightCm: null },
+    };
+  }
   if (
     normalized.type === "text" &&
     Array.isArray(normalized.marks) &&
@@ -322,6 +421,55 @@ function removeNullOptionalProperties(value: unknown): unknown {
     );
   }
   return normalized;
+}
+
+function expandProviderQuestionWire(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(expandProviderQuestionWire);
+  if (value === null || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  if (
+    record.type === "question" &&
+    Array.isArray(record.body) &&
+    (record.choices === null || Array.isArray(record.choices))
+  ) {
+    const choices = record.choices as unknown[] | null;
+    return {
+      type: "question",
+      content: [
+        {
+          type: "questionItem",
+          attrs: {
+            kind: record.kind,
+            writtenMode: record.writtenMode,
+            writtenLines: record.writtenLines,
+            writtenHeightPercent: record.writtenHeightPercent,
+            writtenHeightCm: record.writtenHeightCm,
+            multiForceOneColumn: record.multiForceOneColumn,
+          },
+          content: [
+            ...record.body.map(expandProviderQuestionWire),
+            ...(choices === null
+              ? []
+              : [
+                  {
+                    type: "choiceList",
+                    content: choices.map((choice) => ({
+                      type: "choiceItem",
+                      content: [expandProviderQuestionWire(choice)],
+                    })),
+                  },
+                ]),
+          ],
+        },
+      ],
+    };
+  }
+  return Object.fromEntries(
+    Object.entries(record).map(([key, nested]) => [
+      key,
+      expandProviderQuestionWire(nested),
+    ]),
+  );
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -415,11 +563,24 @@ function normalizeBlockNode(
     return content === value.content ? value : { ...value, content };
   }
 
+  if (value.type === "question") {
+    const body = normalizeBlockContent(value.body, depth + 1, state);
+    const choices =
+      value.choices === null
+        ? null
+        : normalizeBlockContent(value.choices, depth + 1, state);
+    return body === value.body && choices === value.choices
+      ? value
+      : { ...value, body, choices };
+  }
+
   const isBlockContainer =
     value.type === "bulletList" ||
     value.type === "orderedList" ||
     value.type === "listItem" ||
     value.type === "blockquote" ||
+    value.type === "callout" ||
+    value.type === "proof" ||
     value.type === "table" ||
     value.type === "tableRow" ||
     value.type === "tableHeader" ||
@@ -576,7 +737,9 @@ export function parseOpenAIModelPayloadWithNormalization(
     return {
       payload: NormalizedOpenAIComposePayloadV1Schema.parse({
         suggestedTitle: payload.suggestedTitle,
-        document: removeNullOptionalProperties(payload.document),
+        document: removeNullOptionalProperties(
+          expandProviderQuestionWire(payload.document),
+        ),
         summary: payload.summary,
         warnings: payload.warnings,
       }),
@@ -588,7 +751,9 @@ export function parseOpenAIModelPayloadWithNormalization(
   const payload = OpenAIRewritePayloadV1Schema.parse(normalizedProviderValue);
   return {
     payload: NormalizedOpenAIRewritePayloadV1Schema.parse({
-      replacement: removeNullOptionalProperties(payload.replacement),
+      replacement: removeNullOptionalProperties(
+        expandProviderQuestionWire(payload.replacement),
+      ),
       changeSummary: payload.changeSummary,
       preservedElements: payload.preservedElements,
       warnings: payload.warnings,

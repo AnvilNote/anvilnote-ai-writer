@@ -137,6 +137,22 @@ test("schema guidance leaves trusted metadata and usage to orchestration", () =>
     /use null when the text has no marks/i,
   );
   assert.match(schemaSection.content, /never omit the marks property/i);
+  assert.match(schemaSection.content, /use callout for.*tips.*warnings/i);
+  assert.match(schemaSection.content, /use blockquote only for quoted source material/i);
+  assert.match(schemaSection.content, /never emulate a callout.*blockquote/i);
+  assert.match(schemaSection.content, /note.*abstract.*info.*tip.*success.*question/i);
+  assert.match(schemaSection.content, /warning.*failure.*danger.*bug.*example.*quote/i);
+  assert.match(schemaSection.content, /use inlineMath when.*part of a sentence/i);
+  assert.match(schemaSection.content, /use mathBlock only.*independent equation/i);
+  assert.match(schemaSection.content, /raw LaTeX only/i);
+  assert.match(schemaSection.content, /never include.*delimiter/i);
+  assert.match(schemaSection.content, /use proof for.*mathematical.*logical/i);
+  assert.match(schemaSection.content, /do not.*append.*QED.*square/i);
+  assert.match(schemaSection.content, /three question kinds.*single.*multi.*written/i);
+  assert.match(schemaSection.content, /written question.*choices/i);
+  assert.match(schemaSection.content, /wire question.*one item/i);
+  assert.match(schemaSection.content, /multiple.*wire question blocks/i);
+  assert.match(schemaSection.content, /plausible distractors/i);
   assert.doesNotMatch(
     schemaSection.content,
     /provider will enforce.*anvilnote\.ai\.compose-result\.v1/i,
