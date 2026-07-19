@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  AI_DOCUMENT_LIMITS,
   ANVIL_NOTE_SIMPLE_MARK_TYPES,
   AnvilNoteDocumentFragmentV1Schema,
   AnvilNoteDocumentV1Schema,
@@ -18,6 +19,26 @@ export type OpenAIRewritePayloadV1 = RewriteModelPayloadV1;
 export type OpenAIModelPayloadV1 = WriterModelPayloadV1;
 
 export type SafeOpenAITextMarksShape = "missing" | "null" | "array" | "object";
+export type SafeOpenAITextMarksShapeCounts = Partial<
+  Record<SafeOpenAITextMarksShape, number>
+>;
+
+export interface OpenAIMissingTextMarksNormalizationResult {
+  value: unknown;
+  normalizedMissingMarksCount: number;
+}
+
+export interface ParsedOpenAIModelPayload {
+  payload: OpenAIModelPayloadV1;
+  normalizedMissingMarksCount: number;
+}
+
+const SAFE_OPENAI_TEXT_MARKS_SHAPES: SafeOpenAITextMarksShape[] = [
+  "missing",
+  "null",
+  "array",
+  "object",
+];
 
 const linkMarkSchema = z
   .object({
@@ -303,6 +324,167 @@ function removeNullOptionalProperties(value: unknown): unknown {
   return normalized;
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+interface MissingMarksNormalizationState {
+  visitedNodes: number;
+  normalizedMissingMarksCount: number;
+  exceededLimits: boolean;
+}
+
+function visitKnownNode(
+  depth: number,
+  state: MissingMarksNormalizationState,
+): boolean {
+  state.visitedNodes += 1;
+  if (
+    state.visitedNodes > AI_DOCUMENT_LIMITS.maxNodes ||
+    depth > AI_DOCUMENT_LIMITS.maxDepth
+  ) {
+    state.exceededLimits = true;
+    return false;
+  }
+  return true;
+}
+
+function normalizeInlineContent(
+  value: unknown,
+  depth: number,
+  state: MissingMarksNormalizationState,
+): unknown {
+  if (!Array.isArray(value)) return value;
+  let changed = false;
+  const normalized = value.map((entry) => {
+    const next = normalizeInlineNode(entry, depth, state);
+    changed ||= next !== entry;
+    return next;
+  });
+  return changed ? normalized : value;
+}
+
+function normalizeInlineNode(
+  value: unknown,
+  depth: number,
+  state: MissingMarksNormalizationState,
+): unknown {
+  if (state.exceededLimits || !isPlainRecord(value)) return value;
+  if (!visitKnownNode(depth, state)) return value;
+  if (value.type !== "text") return value;
+  if (typeof value.text !== "string" || Object.hasOwn(value, "marks")) {
+    return value;
+  }
+  state.normalizedMissingMarksCount += 1;
+  return { ...value, marks: null };
+}
+
+function normalizeBlockContent(
+  value: unknown,
+  depth: number,
+  state: MissingMarksNormalizationState,
+): unknown {
+  if (!Array.isArray(value)) return value;
+  let changed = false;
+  const normalized = value.map((entry) => {
+    const next = normalizeBlockNode(entry, depth, state);
+    changed ||= next !== entry;
+    return next;
+  });
+  return changed ? normalized : value;
+}
+
+function normalizeBlockNode(
+  value: unknown,
+  depth: number,
+  state: MissingMarksNormalizationState,
+): unknown {
+  if (state.exceededLimits || !isPlainRecord(value)) return value;
+  if (!visitKnownNode(depth, state)) return value;
+
+  const isInlineContainer =
+    value.type === "paragraph" ||
+    value.type === "heading" ||
+    value.type === "codeBlock";
+  if (isInlineContainer) {
+    const content = normalizeInlineContent(value.content, depth + 1, state);
+    return content === value.content ? value : { ...value, content };
+  }
+
+  const isBlockContainer =
+    value.type === "bulletList" ||
+    value.type === "orderedList" ||
+    value.type === "listItem" ||
+    value.type === "blockquote" ||
+    value.type === "table" ||
+    value.type === "tableRow" ||
+    value.type === "tableHeader" ||
+    value.type === "tableCell";
+  if (!isBlockContainer) return value;
+  const content = normalizeBlockContent(value.content, depth + 1, state);
+  return content === value.content ? value : { ...value, content };
+}
+
+function normalizeStructuredRoot(
+  value: unknown,
+  schemaVersion: "anvilnote.document.v1" | "anvilnote.fragment.v1",
+  type: "doc" | "fragment",
+  state: MissingMarksNormalizationState,
+): unknown {
+  if (
+    !isPlainRecord(value) ||
+    value.schemaVersion !== schemaVersion ||
+    value.type !== type
+  ) {
+    return value;
+  }
+  const content = normalizeBlockContent(value.content, 1, state);
+  return content === value.content ? value : { ...value, content };
+}
+
+/**
+ * Repairs only OpenAI's observed omission of `marks` on otherwise valid text
+ * nodes. This does not relax the provider schema: all other malformed values
+ * continue into the existing fail-closed Zod and public AST validation.
+ */
+export function normalizeMissingOpenAITextMarks(
+  value: unknown,
+): OpenAIMissingTextMarksNormalizationResult {
+  if (!isPlainRecord(value)) {
+    return { value, normalizedMissingMarksCount: 0 };
+  }
+
+  const hasDocument = Object.hasOwn(value, "document");
+  const hasReplacement = Object.hasOwn(value, "replacement");
+  if (hasDocument === hasReplacement) {
+    return { value, normalizedMissingMarksCount: 0 };
+  }
+
+  const state: MissingMarksNormalizationState = {
+    visitedNodes: 0,
+    normalizedMissingMarksCount: 0,
+    exceededLimits: false,
+  };
+  const rootKey = hasDocument ? "document" : "replacement";
+  const root = normalizeStructuredRoot(
+    value[rootKey],
+    hasDocument ? "anvilnote.document.v1" : "anvilnote.fragment.v1",
+    hasDocument ? "doc" : "fragment",
+    state,
+  );
+  if (state.exceededLimits || root === value[rootKey]) {
+    return { value, normalizedMissingMarksCount: 0 };
+  }
+  return {
+    value: { ...value, [rootKey]: root },
+    normalizedMissingMarksCount: state.normalizedMissingMarksCount,
+  };
+}
+
 const NULLABLE_IDENTIFIER_KEYS = new Set(["id", "equationNumber", "refName"]);
 
 /**
@@ -313,7 +495,21 @@ const NULLABLE_IDENTIFIER_KEYS = new Set(["id", "equationNumber", "refName"]);
 export function getSafeOpenAITextMarksShape(
   value: unknown,
 ): SafeOpenAITextMarksShape | undefined {
-  const shapes = new Set<SafeOpenAITextMarksShape>();
+  const counts = getSafeOpenAITextMarksShapeCounts(value);
+  const shapes = SAFE_OPENAI_TEXT_MARKS_SHAPES.filter(
+    (shape) => counts?.[shape] !== undefined,
+  );
+  return shapes.length === 1 ? shapes[0] : undefined;
+}
+
+/**
+ * Aggregates only the structural marks representation found on text nodes.
+ * It deliberately excludes all model-authored text and mark attribute values.
+ */
+export function getSafeOpenAITextMarksShapeCounts(
+  value: unknown,
+): SafeOpenAITextMarksShapeCounts | undefined {
+  const counts: SafeOpenAITextMarksShapeCounts = {};
 
   const visit = (nested: unknown): void => {
     if (Array.isArray(nested)) {
@@ -323,16 +519,25 @@ export function getSafeOpenAITextMarksShape(
     if (nested === null || typeof nested !== "object") return;
     const record = nested as Record<string, unknown>;
     if (record.type === "text") {
-      if (!("marks" in record)) shapes.add("missing");
-      else if (record.marks === null) shapes.add("null");
-      else if (Array.isArray(record.marks)) shapes.add("array");
-      else if (typeof record.marks === "object") shapes.add("object");
+      const shape: SafeOpenAITextMarksShape | undefined = !Object.hasOwn(
+        record,
+        "marks",
+      )
+        ? "missing"
+        : record.marks === null
+          ? "null"
+          : Array.isArray(record.marks)
+            ? "array"
+            : typeof record.marks === "object"
+              ? "object"
+              : undefined;
+      if (shape) counts[shape] = (counts[shape] ?? 0) + 1;
     }
     for (const nestedValue of Object.values(record)) visit(nestedValue);
   };
 
   visit(value);
-  return shapes.size === 1 ? [...shapes][0] : undefined;
+  return Object.keys(counts).length > 0 ? counts : undefined;
 }
 
 /**
@@ -358,28 +563,46 @@ function normalizeEmptyNullableIdentifiers(value: unknown): unknown {
   );
 }
 
+export function parseOpenAIModelPayloadWithNormalization(
+  outputSchemaId: OpenAIWriterOutputSchemaId,
+  value: unknown,
+): ParsedOpenAIModelPayload {
+  const missingMarksNormalized = normalizeMissingOpenAITextMarks(value);
+  const normalizedProviderValue = normalizeEmptyNullableIdentifiers(
+    missingMarksNormalized.value,
+  );
+  if (outputSchemaId === "anvilnote.ai.compose-result.v1") {
+    const payload = OpenAIComposePayloadV1Schema.parse(normalizedProviderValue);
+    return {
+      payload: NormalizedOpenAIComposePayloadV1Schema.parse({
+        suggestedTitle: payload.suggestedTitle,
+        document: removeNullOptionalProperties(payload.document),
+        summary: payload.summary,
+        warnings: payload.warnings,
+      }),
+      normalizedMissingMarksCount:
+        missingMarksNormalized.normalizedMissingMarksCount,
+    };
+  }
+
+  const payload = OpenAIRewritePayloadV1Schema.parse(normalizedProviderValue);
+  return {
+    payload: NormalizedOpenAIRewritePayloadV1Schema.parse({
+      replacement: removeNullOptionalProperties(payload.replacement),
+      changeSummary: payload.changeSummary,
+      preservedElements: payload.preservedElements,
+      warnings: payload.warnings,
+    }),
+    normalizedMissingMarksCount:
+      missingMarksNormalized.normalizedMissingMarksCount,
+  };
+}
+
 export function parseOpenAIModelPayload(
   outputSchemaId: OpenAIWriterOutputSchemaId,
   value: unknown,
 ): OpenAIModelPayloadV1 {
-  const normalizedProviderValue = normalizeEmptyNullableIdentifiers(value);
-  if (outputSchemaId === "anvilnote.ai.compose-result.v1") {
-    const payload = OpenAIComposePayloadV1Schema.parse(normalizedProviderValue);
-    return NormalizedOpenAIComposePayloadV1Schema.parse({
-      suggestedTitle: payload.suggestedTitle,
-      document: removeNullOptionalProperties(payload.document),
-      summary: payload.summary,
-      warnings: payload.warnings,
-    });
-  }
-
-  const payload = OpenAIRewritePayloadV1Schema.parse(normalizedProviderValue);
-  return NormalizedOpenAIRewritePayloadV1Schema.parse({
-    replacement: removeNullOptionalProperties(payload.replacement),
-    changeSummary: payload.changeSummary,
-    preservedElements: payload.preservedElements,
-    warnings: payload.warnings,
-  });
+  return parseOpenAIModelPayloadWithNormalization(outputSchemaId, value).payload;
 }
 
 export function validateNormalizedOpenAIModelPayload(

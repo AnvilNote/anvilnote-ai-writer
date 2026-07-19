@@ -86,13 +86,15 @@ eligible for logs or results, and values resembling API keys are rejected. The
 successful execution path prefers the SDK's `_request_id` instead of treating
 the response resource ID as an HTTP request ID.
 
-Only rate limits, transient network/timeouts, and invalid structured output can
-retry, at most once. Retry-After takes precedence over the small exponential
+Only rate limits, transient network/timeouts, HTTP 408/409/5xx provider
+failures, and invalid structured output can retry, at most once. Retry-After
+takes precedence over the small exponential
 backoff and jitter. Backoff is abortable. A request cancelled before execution
 never reaches the SDK; a response arriving after cancellation or deadline is
 discarded.
 
-When a retry follows an invalid output, network failure, or timeout, usage from
+When a retry follows an invalid output, network, timeout, or transient provider
+failure, usage from
 every potentially billable attempt cannot be proven. The successful result
 therefore reports unknown usage and cost instead of presenting only the final
 attempt as the operation total. A pure rate-limit retry retains final usage

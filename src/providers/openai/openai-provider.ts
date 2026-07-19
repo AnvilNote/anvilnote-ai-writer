@@ -31,9 +31,12 @@ import {
   sanitizeOpenAIDiagnosticId,
 } from "./openai-errors";
 import {
-  parseOpenAIModelPayload,
   getSafeOpenAITextMarksShape,
+  getSafeOpenAITextMarksShapeCounts,
+  parseOpenAIModelPayloadWithNormalization,
+  type ParsedOpenAIModelPayload,
   type SafeOpenAITextMarksShape,
+  type SafeOpenAITextMarksShapeCounts,
   validateNormalizedOpenAIModelPayload,
 } from "./openai-model-payload";
 import { normalizeOpenAIUsage } from "./openai-usage";
@@ -96,6 +99,8 @@ export interface SafeOpenAIExecutionLogMetadata {
   providerParam?: string;
   validationIssuePaths?: string[];
   marksShape?: SafeOpenAITextMarksShape;
+  rawOutputTextMarksShapeCounts?: SafeOpenAITextMarksShapeCounts;
+  normalizedMissingMarksCount?: number;
 }
 
 export function toSafeOpenAIExecutionLogMetadata(
@@ -181,10 +186,55 @@ async function abortableSleep(
   });
 }
 
+function getSafeRawOutputTextMarksShapeCounts(
+  response: OpenAIParsedResponseLike,
+): SafeOpenAITextMarksShapeCounts | undefined {
+  const outputTexts = response.output
+    .flatMap((item) => item.content ?? [])
+    .filter((content) => content.type === "output_text")
+    .map((content) => content.text);
+  if (outputTexts.length !== 1 || typeof outputTexts[0] !== "string") {
+    return undefined;
+  }
+  try {
+    return getSafeOpenAITextMarksShapeCounts(JSON.parse(outputTexts[0]));
+  } catch {
+    return undefined;
+  }
+}
+
+function isSafeTextMarksShapeCounts(
+  value: unknown,
+): value is SafeOpenAITextMarksShapeCounts {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const allowedShapes = new Set<SafeOpenAITextMarksShape>([
+    "missing",
+    "null",
+    "array",
+    "object",
+  ]);
+  const entries = Object.entries(value);
+  return (
+    entries.length > 0 &&
+    entries.every(
+      ([shape, count]) =>
+        allowedShapes.has(shape as SafeOpenAITextMarksShape) &&
+        Number.isSafeInteger(count) &&
+        count > 0,
+    )
+  );
+}
+
+interface ParsedCompletedPayload extends ParsedOpenAIModelPayload {
+  rawOutputTextMarksShapeCounts?: SafeOpenAITextMarksShapeCounts;
+}
+
 function parseCompletedPayload(
   response: OpenAIParsedResponseLike,
   request: PreparedWriterRequest,
-) {
+): ParsedCompletedPayload {
   const refusal = response.output
     .flatMap((item) => item.content ?? [])
     .find((content) => content.type === "refusal");
@@ -235,18 +285,31 @@ function parseCompletedPayload(
     );
   }
   try {
-    if (request.outputSchemaId === "anvilnote.ai.compose-result.v1") {
-      return parseOpenAIModelPayload(
-        "anvilnote.ai.compose-result.v1",
-        response.output_parsed,
+    if (
+      request.outputSchemaId !== "anvilnote.ai.compose-result.v1" &&
+      request.outputSchemaId !== "anvilnote.ai.rewrite-result.v1"
+    ) {
+      throw new AIWriterError(
+        createAIWriterErrorShape("invalid_request_schema", {
+          retryable: false,
+          provider: "openai",
+          model: request.provider.model,
+          requestId: request.requestId,
+        }),
       );
     }
-    if (request.outputSchemaId === "anvilnote.ai.rewrite-result.v1") {
-      return parseOpenAIModelPayload(
-        "anvilnote.ai.rewrite-result.v1",
-        response.output_parsed,
-      );
-    }
+    const parsed = parseOpenAIModelPayloadWithNormalization(
+      request.outputSchemaId,
+      response.output_parsed,
+    );
+    const rawOutputTextMarksShapeCounts =
+      getSafeRawOutputTextMarksShapeCounts(response);
+    return {
+      ...parsed,
+      ...(rawOutputTextMarksShapeCounts
+        ? { rawOutputTextMarksShapeCounts }
+        : {}),
+    };
   } catch (error) {
     if (error instanceof z.ZodError) {
       const validationIssuePaths = [
@@ -273,7 +336,14 @@ function parseCompletedPayload(
                   const marksShape = getSafeOpenAITextMarksShape(
                     response.output_parsed,
                   );
-                  return marksShape ? { marksShape } : {};
+                  const rawOutputTextMarksShapeCounts =
+                    getSafeRawOutputTextMarksShapeCounts(response);
+                  return {
+                    ...(marksShape ? { marksShape } : {}),
+                    ...(rawOutputTextMarksShapeCounts
+                      ? { rawOutputTextMarksShapeCounts }
+                      : {}),
+                  };
                 })()
               : {}),
           },
@@ -282,14 +352,6 @@ function parseCompletedPayload(
     }
     throw error;
   }
-  throw new AIWriterError(
-    createAIWriterErrorShape("invalid_request_schema", {
-      retryable: false,
-      provider: "openai",
-      model: request.provider.model,
-      requestId: request.requestId,
-    }),
-  );
 }
 
 export interface OpenAIProviderDependencies {
@@ -372,7 +434,8 @@ export class OpenAIProviderAdapter implements AIProviderAdapter {
           if (abortContext.signal.aborted) {
             throw new Error("provider response arrived after cancellation");
           }
-          let payload = parseCompletedPayload(response, request);
+          const parsedPayload = parseCompletedPayload(response, request);
+          let payload = parsedPayload.payload;
           if (options.protectedContentRegistry) {
             const restored =
               options.protectedContentRegistry.validateAndRestoreStructured(
@@ -410,6 +473,18 @@ export class OpenAIProviderAdapter implements AIProviderAdapter {
                 : {}),
               ...(usage.outputTokens !== null
                 ? { outputTokens: usage.outputTokens }
+                : {}),
+              ...(parsedPayload.normalizedMissingMarksCount > 0
+                ? {
+                    normalizedMissingMarksCount:
+                      parsedPayload.normalizedMissingMarksCount,
+                    ...(parsedPayload.rawOutputTextMarksShapeCounts
+                      ? {
+                          rawOutputTextMarksShapeCounts:
+                            parsedPayload.rawOutputTextMarksShapeCounts,
+                        }
+                      : {}),
+                  }
                 : {}),
             }),
           );
@@ -464,6 +539,14 @@ export class OpenAIProviderAdapter implements AIProviderAdapter {
                     }
                   : {}
               ),
+              ...(isSafeTextMarksShapeCounts(
+                error.details?.rawOutputTextMarksShapeCounts,
+              )
+                ? {
+                    rawOutputTextMarksShapeCounts:
+                      error.details.rawOutputTextMarksShapeCounts,
+                  }
+                : {}),
             }),
           );
           if (attempt >= 2 || !error.retryable || abortContext.signal.aborted) {
@@ -472,7 +555,8 @@ export class OpenAIProviderAdapter implements AIProviderAdapter {
           if (
             error.code === "invalid_structured_output" ||
             error.code === "provider_timeout" ||
-            error.code === "network_error"
+            error.code === "network_error" ||
+            error.code === "provider_error"
           ) {
             usageReliable = false;
           }

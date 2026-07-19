@@ -44,6 +44,42 @@ test("writer request accepts a validated explicit output locale", () => {
   );
 });
 
+test("writer request accepts only bounded role and display-text conversation context", () => {
+  const conversation = {
+    messages: [
+      { role: "user", content: "Summarize the current document." },
+      { role: "assistant", content: "I prepared a concise outline." },
+    ],
+  };
+  const withConversation = {
+    ...request,
+    context: { ...request.context, conversation },
+  };
+
+  assert.deepEqual(
+    AIWriterRequestSchema.parse(withConversation),
+    withConversation,
+  );
+  assert.equal(
+    AIWriterRequestSchema.safeParse({
+      ...request,
+      context: {
+        ...request.context,
+        conversation: {
+          messages: [
+            {
+              role: "user",
+              content: "Never expose this field to prompt assembly.",
+              credential: "fake-secret-value",
+            },
+          ],
+        },
+      },
+    }).success,
+    false,
+  );
+});
+
 test("writer request rejects an API key mixed into the domain request", () => {
   assert.equal(
     AIWriterRequestSchema.safeParse({ ...request, apiKey: "fake-secret-value" })

@@ -58,6 +58,7 @@ function createPreparedRequest() {
 
 function completedResponse(
   parsed: unknown = modelPayload,
+  rawPayload: unknown = parsed,
 ): OpenAIParsedResponseLike {
   return {
     id: "resp_safe_diagnostic",
@@ -67,7 +68,7 @@ function completedResponse(
     output: [
       {
         type: "message",
-        content: [{ type: "output_text", text: JSON.stringify(modelPayload) }],
+        content: [{ type: "output_text", text: JSON.stringify(rawPayload) }],
       },
     ],
     output_parsed: parsed,
@@ -219,6 +220,35 @@ test("invalid structured output retries once, then stops", async () => {
   );
 });
 
+test("a transient provider 5xx retries once and then succeeds", async () => {
+  let attempts = 0;
+  const adapter = new OpenAIProviderAdapter({
+    clientFactory: () => ({
+      responses: {
+        async parse() {
+          attempts += 1;
+          if (attempts === 1) {
+            throw Object.assign(new Error("private upstream message"), {
+              status: 500,
+              code: "server_error",
+              type: "server_error",
+            });
+          }
+          return completedResponse();
+        },
+      },
+    }),
+    sleep: async () => undefined,
+    random: () => 0,
+  });
+
+  const result = await adapter.execute(createPreparedRequest(), { apiKey: secret });
+  assert.equal(attempts, 2);
+  assert.equal(result.attempts, 2);
+  assert.equal(result.usage.totalTokens, null);
+  assert.equal(result.usage.estimatedActualCostUsd, null);
+});
+
 test("invalid mark payload logs only aggregate safe shape diagnostics", async () => {
   const logged: unknown[] = [];
   const sourceText = "private source text must never reach logs";
@@ -229,14 +259,16 @@ test("invalid mark payload logs only aggregate safe shape diagnostics", async ()
       content: [
         {
           type: "paragraph",
-          content: [{ type: "text", text: sourceText }],
+          content: [{ type: "text", text: sourceText, marks: {} }],
         },
       ],
     },
   };
   const adapter = new OpenAIProviderAdapter({
     clientFactory: () => ({
-      responses: { parse: async () => completedResponse(malformedPayload) },
+      responses: {
+        parse: async () => completedResponse(malformedPayload, modelPayload),
+      },
     }),
     logger: (metadata) => logged.push(metadata),
     sleep: async () => undefined,
@@ -251,11 +283,120 @@ test("invalid mark payload logs only aggregate safe shape diagnostics", async ()
 
   assert.equal(logged.length, 2);
   for (const entry of logged) {
-    assert.equal((entry as { marksShape?: unknown }).marksShape, "missing");
+    assert.equal((entry as { marksShape?: unknown }).marksShape, "object");
+    assert.deepEqual(
+      (entry as { rawOutputTextMarksShapeCounts?: unknown })
+        .rawOutputTextMarksShapeCounts,
+      { array: 2, null: 1 },
+    );
   }
   const serialized = JSON.stringify(logged);
   assert.equal(serialized.includes(sourceText), false);
   assert.equal(serialized.includes(secret), false);
+});
+
+test("missing text marks normalize without a retry and log aggregate counts only", async () => {
+  const sourceText = "private generated text must never reach logs";
+  const missingMarksPayload = {
+    ...modelPayload,
+    document: {
+      ...modelPayload.document,
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: sourceText },
+            { type: "text", text: " bold", marks: [{ type: "bold" }] },
+            { type: "text", text: " plain", marks: null },
+          ],
+        },
+      ],
+    },
+  };
+  const logged: unknown[] = [];
+  let attempts = 0;
+  const adapter = new OpenAIProviderAdapter({
+    clientFactory: () => ({
+      responses: {
+        async parse() {
+          attempts += 1;
+          return completedResponse(missingMarksPayload);
+        },
+      },
+    }),
+    logger: (metadata) => logged.push(metadata),
+    sleep: async () => undefined,
+  });
+
+  const result = await adapter.execute(createPreparedRequest(), {
+    apiKey: secret,
+  });
+
+  assert.equal(attempts, 1);
+  assert.equal(result.attempts, 1);
+  assert.ok("document" in result.payload);
+  if (!("document" in result.payload)) assert.fail("expected compose payload");
+  const [paragraph] = result.payload.document.content;
+  assert.equal(paragraph?.type, "paragraph");
+  if (paragraph?.type !== "paragraph") assert.fail("expected paragraph");
+  assert.deepEqual(paragraph.content, [
+    { type: "text", text: sourceText },
+    { type: "text", text: " bold", marks: [{ type: "bold" }] },
+    { type: "text", text: " plain" },
+  ]);
+  assert.equal(logged.length, 1);
+  assert.deepEqual(
+    (logged[0] as { rawOutputTextMarksShapeCounts?: unknown })
+      .rawOutputTextMarksShapeCounts,
+    { missing: 1, null: 1, array: 1 },
+  );
+  assert.equal(
+    (logged[0] as { normalizedMissingMarksCount?: unknown })
+      .normalizedMissingMarksCount,
+    1,
+  );
+  const serialized = JSON.stringify(logged);
+  assert.equal(serialized.includes(sourceText), false);
+  assert.equal(serialized.includes(secret), false);
+});
+
+test("invalid output still retries when normalization cannot repair every issue", async () => {
+  const unrepairedPayload = {
+    ...modelPayload,
+    document: {
+      ...modelPayload.document,
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "missing marks" },
+            { type: "text", text: "invalid marks", marks: {} },
+          ],
+        },
+      ],
+    },
+  };
+  let attempts = 0;
+  const adapter = new OpenAIProviderAdapter({
+    clientFactory: () => ({
+      responses: {
+        async parse() {
+          attempts += 1;
+          return completedResponse(unrepairedPayload);
+        },
+      },
+    }),
+    sleep: async () => undefined,
+    random: () => 0,
+  });
+
+  await assert.rejects(
+    adapter.execute(createPreparedRequest(), { apiKey: secret }),
+    (error) =>
+      error instanceof AIWriterError &&
+      error.code === "invalid_structured_output",
+  );
+  assert.equal(attempts, 2);
 });
 
 test("permanent credential errors never retry", async () => {

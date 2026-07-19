@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   getOpenAIModelPayloadFormat,
+  normalizeMissingOpenAITextMarks,
   parseOpenAIModelPayload,
   validateOpenAIStrictSchema,
 } from "../../src/server/index";
@@ -101,6 +102,309 @@ test("nullable provider AST normalizes to the domain AST and reruns local valida
       ],
     },
   });
+});
+
+test("compose text nodes that omit marks normalize to the public unmarked AST", () => {
+  const payload = {
+    ...composePayload,
+    document: {
+      ...composePayload.document,
+      content: [
+        {
+          type: "paragraph" as const,
+          content: [
+            { type: "text" as const, text: "Plain text" },
+            {
+              type: "text" as const,
+              text: " bold",
+              marks: [{ type: "bold" as const }],
+            },
+            { type: "text" as const, text: " still plain", marks: null },
+          ],
+        },
+      ],
+    },
+  };
+
+  const parsed = parseOpenAIModelPayload(
+    "anvilnote.ai.compose-result.v1",
+    payload,
+  );
+
+  assert.ok("document" in parsed);
+  if (!("document" in parsed)) assert.fail("expected compose payload");
+  assert.deepEqual(parsed.document.content[0], {
+    type: "paragraph",
+    content: [
+      { type: "text", text: "Plain text" },
+      { type: "text", text: " bold", marks: [{ type: "bold" }] },
+      { type: "text", text: " still plain" },
+    ],
+  });
+  assert.equal(
+    Object.hasOwn(payload.document.content[0].content[0], "marks"),
+    false,
+  );
+});
+
+test("narrow marks normalization is immutable and leaves valid marks unchanged", () => {
+  const payload = {
+    ...composePayload,
+    document: {
+      ...composePayload.document,
+      content: [
+        {
+          type: "blockquote" as const,
+          content: [
+            {
+              type: "paragraph" as const,
+              content: [
+                { type: "text" as const, text: "missing" },
+                { type: "text" as const, text: " null", marks: null },
+                {
+                  type: "text" as const,
+                  text: " bold",
+                  marks: [{ type: "bold" as const }],
+                },
+                {
+                  type: "text" as const,
+                  text: " link",
+                  marks: [
+                    {
+                      type: "link" as const,
+                      attrs: {
+                        href: "https://example.com/source",
+                        title: null,
+                        target: null,
+                      },
+                    },
+                  ],
+                },
+                { type: "hardBreak" as const },
+              ],
+            },
+          ],
+        },
+        {
+          type: "mathBlock" as const,
+          attrs: {
+            latex: "x^2",
+            id: null,
+            equationNumber: null,
+            refName: null,
+          },
+        },
+      ],
+    },
+  };
+
+  const normalized = normalizeMissingOpenAITextMarks(payload);
+
+  assert.equal(normalized.normalizedMissingMarksCount, 1);
+  assert.notEqual(normalized.value, payload);
+  const firstBlock = payload.document.content[0];
+  assert.ok(firstBlock && firstBlock.type === "blockquote");
+  if (!firstBlock || firstBlock.type !== "blockquote") {
+    assert.fail("expected blockquote");
+  }
+  const firstParagraph = firstBlock.content[0];
+  assert.ok(firstParagraph && firstParagraph.type === "paragraph");
+  if (!firstParagraph || firstParagraph.type !== "paragraph") {
+    assert.fail("expected paragraph");
+  }
+  const firstText = firstParagraph.content[0];
+  assert.ok(firstText && firstText.type === "text");
+  if (!firstText || firstText.type !== "text") assert.fail("expected text");
+  assert.equal(
+    Object.hasOwn(firstText, "marks"),
+    false,
+  );
+  assert.deepEqual(normalized.value, {
+    ...payload,
+    document: {
+      ...payload.document,
+      content: [
+        {
+          ...firstBlock,
+          content: [
+            {
+              ...firstParagraph,
+              content: [
+                { type: "text", text: "missing", marks: null },
+                { type: "text", text: " null", marks: null },
+                {
+                  type: "text",
+                  text: " bold",
+                  marks: [{ type: "bold" }],
+                },
+                {
+                  type: "text",
+                  text: " link",
+                  marks: [
+                    {
+                      type: "link",
+                      attrs: {
+                        href: "https://example.com/source",
+                        title: null,
+                        target: null,
+                      },
+                    },
+                  ],
+                },
+                { type: "hardBreak" },
+              ],
+            },
+          ],
+        },
+        payload.document.content[1],
+      ],
+    },
+  });
+});
+
+test("rewrite text nodes that omit marks normalize to the public unmarked AST", () => {
+  const parsed = parseOpenAIModelPayload("anvilnote.ai.rewrite-result.v1", {
+    replacement: {
+      schemaVersion: "anvilnote.fragment.v1",
+      type: "fragment",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "replacement" },
+            { type: "text", text: " bold", marks: [{ type: "bold" }] },
+          ],
+        },
+      ],
+    },
+    changeSummary: "Rewrote the selection.",
+    preservedElements: [],
+    warnings: [],
+  });
+
+  assert.ok("replacement" in parsed);
+  if (!("replacement" in parsed)) assert.fail("expected rewrite payload");
+  assert.deepEqual(parsed.replacement.content[0], {
+    type: "paragraph",
+    content: [
+      { type: "text", text: "replacement" },
+      { type: "text", text: " bold", marks: [{ type: "bold" }] },
+    ],
+  });
+});
+
+test("fallback does not repair non-text nodes, missing text, or an own invalid marks value", () => {
+  const nonTextPayload = {
+    ...composePayload,
+    document: {
+      ...composePayload.document,
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "hardBreak" }],
+        },
+      ],
+    },
+  };
+  const unchanged = normalizeMissingOpenAITextMarks(nonTextPayload);
+  assert.equal(unchanged.value, nonTextPayload);
+  assert.equal(unchanged.normalizedMissingMarksCount, 0);
+
+  for (const invalidTextNode of [
+    { type: "text", marks: null },
+    { text: "missing type", marks: null },
+    { type: "text", text: "undefined marks", marks: undefined },
+  ]) {
+    const payload = {
+      ...composePayload,
+      document: {
+        ...composePayload.document,
+        content: [
+          { type: "paragraph", content: [invalidTextNode] },
+        ],
+      },
+    };
+    const normalized = normalizeMissingOpenAITextMarks(payload);
+    assert.equal(normalized.normalizedMissingMarksCount, 0);
+    assert.equal(normalized.value, payload);
+    assert.throws(() =>
+      parseOpenAIModelPayload("anvilnote.ai.compose-result.v1", payload),
+    );
+  }
+});
+
+test("fallback rejects every non-array-or-null marks representation and invalid mark semantics", () => {
+  const invalidMarks = [
+    {},
+    "bold",
+    123,
+    true,
+    [{ type: "unknown" }],
+    [{ type: "bold", attrs: {} }],
+    [
+      {
+        type: "link",
+        attrs: {
+          href: "https://example.com",
+          title: null,
+          target: null,
+          unexpected: true,
+        },
+      },
+    ],
+  ];
+
+  for (const marks of invalidMarks) {
+    assert.throws(() =>
+      parseOpenAIModelPayload("anvilnote.ai.compose-result.v1", {
+        ...composePayload,
+        document: {
+          ...composePayload.document,
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: "invalid", marks }],
+            },
+          ],
+        },
+      }),
+    );
+  }
+});
+
+test("fallback does not repair other missing required fields", () => {
+  const { summary: _summary, ...missingSummary } = composePayload;
+  assert.throws(() =>
+    parseOpenAIModelPayload("anvilnote.ai.compose-result.v1", missingSummary),
+  );
+});
+
+test("fallback leaves over-depth ASTs untouched for the existing safety validators", () => {
+  let nested: unknown = {
+    type: "paragraph",
+    content: [{ type: "text", text: "deep", marks: null }],
+  };
+  for (let index = 0; index < 16; index += 1) {
+    nested = {
+      type: "bulletList",
+      content: [{ type: "listItem", content: [nested] }],
+    };
+  }
+  const payload = {
+    ...composePayload,
+    document: {
+      ...composePayload.document,
+      content: [nested],
+    },
+  };
+
+  const normalized = normalizeMissingOpenAITextMarks(payload);
+  assert.equal(normalized.value, payload);
+  assert.equal(normalized.normalizedMissingMarksCount, 0);
+  assert.throws(
+    () => parseOpenAIModelPayload("anvilnote.ai.compose-result.v1", payload),
+    /too deep/i,
+  );
 });
 
 test("empty nullable identifiers from the provider normalize to absence", () => {

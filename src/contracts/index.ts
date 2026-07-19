@@ -1,5 +1,6 @@
 export * from "./attachment-context";
 export * from "./connection-test";
+export * from "./conversation";
 export * from "./errors";
 export * from "./provider";
 export * from "./usage";

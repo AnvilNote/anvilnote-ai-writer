@@ -26,6 +26,12 @@ test("OpenAI HTTP status and codes map to stable AnvilNote errors", () => {
       false,
     ],
     [{ status: 413, code: "request_too_large" }, "request_too_large", false],
+    [{ status: 408, code: "request_timeout" }, "provider_error", true],
+    [{ status: 409, code: "conflict" }, "provider_error", true],
+    [{ status: 500, code: "server_error" }, "provider_error", true],
+    [{ status: 502, code: "bad_gateway" }, "provider_error", true],
+    [{ status: 503, code: "service_unavailable" }, "provider_error", true],
+    [{ status: 504, code: "gateway_timeout" }, "provider_error", true],
   ] as const;
 
   for (const [raw, expectedCode, retryable] of cases) {

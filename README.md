@@ -45,6 +45,13 @@ uses the English policy, and other locales use the language-neutral core with
 fallback metadata. Mixed-language data uses one primary policy and preserves
 the other language rather than stacking full language policies.
 
+Conversation context is an optional, browser-safe prompt projection containing
+only ordered `user`/`assistant` display text. It is limited to eight bounded
+messages and is explicitly untrusted reference data; API, not a browser,
+chooses which persisted same-document messages are supplied. Conversation IDs,
+draft JSON, provider output, credentials, usage and pricing never enter this
+contract.
+
 ## Prompt assets
 
 Prompt and policy Markdown is allowlisted in registries. `pnpm build` copies
@@ -77,11 +84,13 @@ central low reasoning effort; the minimal connection test uses `none`.
 The OpenAI wire schema is intentionally separate from the domain AST schema.
 Strict Structured Outputs requires every object property to be required, so
 optional AST fields use required nullable values on the wire. Provider text
-marks use fixed boolean fields plus one nullable link, which makes duplicate
-mark types unrepresentable. The SDK parses JSON without the helper's eager Zod
-hook; allowlisted null/empty fields normalize, marks convert to the domain
-array, and the result is validated again through the provider-neutral
-AnvilNote AST and semantic validators. A static schema
+marks use the same strict public mark-array union as the AnvilNote AST; `null`
+represents no marks on the wire. The SDK parses JSON without the helper's eager
+Zod hook. At the OpenAI response boundary only, a text node with an otherwise
+valid `type` and string `text` but no own `marks` field is immutably normalized
+to `marks: null`; object/flag/string/unknown mark shapes are still rejected.
+The result is then validated again through the provider-neutral AnvilNote AST
+and semantic validators. A static schema
 check enforces an object root, complete `required` lists,
 `additionalProperties: false`, an explicit supported-keyword allowlist, and
 documented property/nesting limits. SDK-emitted draft metadata and unsupported
@@ -98,12 +107,14 @@ nodes, unsafe links, and protected-placeholder violations all fail closed.
 
 The SDK client is short-lived, receives the BYOK credential as a separate
 trusted argument, and disables SDK retries. AnvilNote permits at most one retry
-for rate limiting, transient network/timeout failures, or invalid structured
-output; it respects Retry-After and cancellation during backoff. Connection
+for rate limiting, transient network/timeout/provider failures including HTTP
+408, 409, and 5xx, or invalid structured output; it respects Retry-After and
+cancellation during backoff. Connection
 tests do not retry. Caller cancellation and the overall request deadline share
 one request-scoped signal, and late responses are discarded.
 
-If a retry follows an invalid output, network failure, or timeout, aggregate
+If a retry follows an invalid output, network, timeout, or transient provider
+failure, aggregate
 usage cannot be proven from all potentially billable attempts. The returned
 usage and cost are therefore unknown rather than reporting only the final
 attempt and understating charges.

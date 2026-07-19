@@ -169,6 +169,9 @@ export function normalizeOpenAIError(
   ) {
     return create("network_error", true);
   }
+  if (status === 408 || status === 409 || (status !== undefined && status >= 500)) {
+    return create("provider_error", true);
+  }
   return create(
     status !== undefined ? "provider_error" : "unknown_error",
     false,

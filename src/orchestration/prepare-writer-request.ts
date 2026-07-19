@@ -27,6 +27,7 @@ export interface PreparedPromptSection {
     | "policy"
     | "context"
     | "attachment"
+    | "conversation"
     | "selection"
     | "instruction";
   content: string;
@@ -48,6 +49,7 @@ export interface PreparedWriterRequest {
     humanizerEnabled: boolean;
     humanizerLanguageFallback: boolean;
     attachmentCount: number;
+    conversationMessageCount: number;
     selectedContentPresent: boolean;
   };
 }
@@ -186,6 +188,7 @@ export function prepareWriterRequest(
       humanizerEnabled: request.options.humanizerEnabled,
       humanizerLanguageFallback: languageRoute.fallback,
       attachmentCount: attachments.length,
+      conversationMessageCount: request.context.conversation?.messages.length ?? 0,
       selectedContentPresent: Boolean(request.context.selectedContent),
     },
   };

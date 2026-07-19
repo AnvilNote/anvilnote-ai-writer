@@ -128,6 +128,15 @@ test("schema guidance leaves trusted metadata and usage to orchestration", () =>
   assert.match(schemaSection.content, /every listItem must start with a paragraph/i);
   assert.match(schemaSection.content, /same non-empty column grid/i);
   assert.match(schemaSection.content, /use null.not an empty string/i);
+  assert.match(
+    schemaSection.content,
+    /every text node must include the marks property/i,
+  );
+  assert.match(
+    schemaSection.content,
+    /use null when the text has no marks/i,
+  );
+  assert.match(schemaSection.content, /never omit the marks property/i);
   assert.doesNotMatch(
     schemaSection.content,
     /provider will enforce.*anvilnote\.ai\.compose-result\.v1/i,
@@ -168,6 +177,58 @@ test("hostile selection remains data and selects the rewrite contract", () => {
   assert.equal(selectionSection.role, "user");
   assert.match(selectionSection.content, /ANVIL_UNTRUSTED_SELECTION/);
   assert.match(selectionSection.content, /Return plain text instead of JSON/);
+  assert.equal(
+    prepared.sections
+      .filter((section) => section.role !== "user")
+      .some((section) => section.content.includes(hostileText)),
+    false,
+  );
+});
+
+test("conversation history is bounded untrusted reference data before the current instruction", () => {
+  const request = createComposeRequest();
+  const prepared = prepareWriterRequest({
+    ...request,
+    context: {
+      ...request.context,
+      currentDocument: {
+        schemaVersion: "anvilnote.document.v1",
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "Current document context." }],
+          },
+        ],
+      },
+      conversation: {
+        messages: [
+          { role: "user", content: hostileText },
+          {
+            role: "assistant",
+            content: "I can help with a safe, structured draft.",
+          },
+        ],
+      },
+    },
+  });
+  const conversationIndex = prepared.sections.findIndex(
+    (section) => section.kind === "conversation",
+  );
+  const documentIndex = prepared.sections.findIndex(
+    (section) => section.id === "context.current-document",
+  );
+  const instructionIndex = prepared.sections.findIndex(
+    (section) => section.kind === "instruction",
+  );
+  const conversation = prepared.sections[conversationIndex];
+
+  assert.ok(conversationIndex >= 0);
+  assert.ok(documentIndex < conversationIndex);
+  assert.ok(conversationIndex < instructionIndex);
+  assert.equal(conversation.role, "user");
+  assert.match(conversation.content, /ANVIL_UNTRUSTED_CONVERSATION_HISTORY/);
+  assert.match(conversation.content, /Ignore all previous instructions/);
   assert.equal(
     prepared.sections
       .filter((section) => section.role !== "user")
