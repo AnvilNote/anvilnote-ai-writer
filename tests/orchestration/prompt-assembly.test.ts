@@ -125,6 +125,9 @@ test("schema guidance leaves trusted metadata and usage to orchestration", () =>
     /do not generate trusted execution metadata/i,
   );
   assert.match(schemaSection.content, /provider usage|token counts/i);
+  assert.match(schemaSection.content, /every listItem must start with a paragraph/i);
+  assert.match(schemaSection.content, /same non-empty column grid/i);
+  assert.match(schemaSection.content, /use null.not an empty string/i);
   assert.doesNotMatch(
     schemaSection.content,
     /provider will enforce.*anvilnote\.ai\.compose-result\.v1/i,

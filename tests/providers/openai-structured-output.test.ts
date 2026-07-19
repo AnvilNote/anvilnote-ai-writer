@@ -30,6 +30,8 @@ test("compose and rewrite use distinct strict model-authored payload schemas", (
   assert.equal(compose.strict, true);
   assert.equal(compose.name, "anvilnote_compose_payload_v1");
   assert.equal(rewrite.name, "anvilnote_rewrite_payload_v1");
+  assert.equal("$parseRaw" in compose, false);
+  assert.equal("$parseRaw" in rewrite, false);
   assert.notDeepEqual(compose.schema, rewrite.schema);
 });
 
@@ -101,6 +103,103 @@ test("nullable provider AST normalizes to the domain AST and reruns local valida
   });
 });
 
+test("empty nullable identifiers from the provider normalize to absence", () => {
+  const parsed = parseOpenAIModelPayload("anvilnote.ai.compose-result.v1", {
+    ...composePayload,
+    document: {
+      ...composePayload.document,
+      content: [
+        {
+          type: "heading",
+          attrs: { level: 1, id: "" },
+          content: [{ type: "text", text: "Heading", marks: null }],
+        },
+        {
+          type: "mathBlock",
+          attrs: {
+            latex: "x^2",
+            id: "   ",
+            equationNumber: null,
+            refName: "",
+          },
+        },
+      ],
+    },
+  });
+  assert.ok("document" in parsed);
+  if (!("document" in parsed)) assert.fail("expected compose payload");
+  assert.deepEqual(parsed.document.content, [
+    {
+      type: "heading",
+      attrs: { level: 1 },
+      content: [{ type: "text", text: "Heading" }],
+    },
+    { type: "mathBlock", attrs: { latex: "x^2" } },
+  ]);
+});
+
+test("provider mark flags normalize into a unique domain mark array", () => {
+  const parsed = parseOpenAIModelPayload("anvilnote.ai.compose-result.v1", {
+    ...composePayload,
+    document: {
+      ...composePayload.document,
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "text",
+              text: "Emphasis",
+              marks: {
+                bold: true,
+                italic: false,
+                strike: false,
+                code: false,
+                underline: false,
+                link: null,
+              },
+            },
+          ],
+        },
+      ],
+    },
+  });
+  assert.ok("document" in parsed);
+  if (!("document" in parsed)) assert.fail("expected compose payload");
+  assert.deepEqual(parsed.document.content[0], {
+    type: "paragraph",
+    content: [{ type: "text", text: "Emphasis", marks: [{ type: "bold" }] }],
+  });
+});
+
+test("provider wire format rejects ambiguous mark arrays", () => {
+  assert.throws(() =>
+    parseOpenAIModelPayload("anvilnote.ai.compose-result.v1", {
+      ...composePayload,
+      document: {
+        ...composePayload.document,
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              {
+                type: "text",
+                text: "Links",
+                marks: [
+                  {
+                    type: "link",
+                    attrs: { href: "https://one.example", title: null, target: null },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+});
+
 test("model payload rejects extra metadata and invalid domain content", () => {
   assert.throws(
     () =>
@@ -125,8 +224,13 @@ test("model payload rejects extra metadata and invalid domain content", () => {
                 {
                   type: "text",
                   text: "unsafe",
-                  marks: [
-                    {
+                  marks: {
+                    bold: false,
+                    italic: false,
+                    strike: false,
+                    code: false,
+                    underline: false,
+                    link: {
                       type: "link",
                       attrs: {
                         href: "javascript:alert(1)",
@@ -134,7 +238,7 @@ test("model payload rejects extra metadata and invalid domain content", () => {
                         target: null,
                       },
                     },
-                  ],
+                  },
                 },
               ],
             },

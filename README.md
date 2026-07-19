@@ -7,8 +7,8 @@ Mode.
 Browser-safe consumers use `contracts`, `document`, and `pricing`. Trusted Node
 runtimes use `server` for prompt loading, profile selection, language/style
 routing, prepared writer requests, and provider execution. The official OpenAI
-SDK is reachable only through the `server` export; Phase 3 does not yet connect
-this package to AnvilNote API, Desktop, or Web.
+SDK is reachable only through the `server` export. AnvilNote API consumes that
+trusted export, while Web imports only the browser-safe subpaths.
 
 ## Writing configuration
 
@@ -69,21 +69,24 @@ unknown node, mark, or attribute.
 
 ## OpenAI provider
 
-Phase 3 uses `openai@6.48.0`, the Responses API, and the SDK's Zod 4-compatible
-`zodTextFormat()` helper. Requests set `store: false`, `background: false`, no
+The server adapter uses `openai@6.48.0`, the Responses API, and Zod 4 JSON
+Schema generation. Requests set `store: false`, `background: false`, no
 conversation/previous response, and an empty tools list. Writer requests use a
 central low reasoning effort; the minimal connection test uses `none`.
 
 The OpenAI wire schema is intentionally separate from the domain AST schema.
 Strict Structured Outputs requires every object property to be required, so
-optional AST fields use required nullable values on the wire. After parsing,
-null optional properties are removed and the result is validated again through
-the provider-neutral AnvilNote AST and semantic validators. A static schema
+optional AST fields use required nullable values on the wire. Provider text
+marks use fixed boolean fields plus one nullable link, which makes duplicate
+mark types unrepresentable. The SDK parses JSON without the helper's eager Zod
+hook; allowlisted null/empty fields normalize, marks convert to the domain
+array, and the result is validated again through the provider-neutral
+AnvilNote AST and semantic validators. A static schema
 check enforces an object root, complete `required` lists,
 `additionalProperties: false`, an explicit supported-keyword allowlist, and
 documented property/nesting limits. SDK-emitted draft metadata and unsupported
-string-length keywords are omitted from the provider schema; the unchanged Zod
-parser still enforces those local limits after parsing. Recursive `$ref` remains
+string-length keywords are omitted from the provider schema; the full local
+Zod parser still enforces those limits after normalization. Recursive `$ref` remains
 enabled because the current Structured Outputs subset supports recursion.
 
 The provider abstraction carries a provider-neutral model payload; OpenAI owns

@@ -25,6 +25,12 @@ function makeSchemaSection(): PreparedPromptSection {
       "Generate only the model-authored document or replacement, title or summary, and warnings requested by that schema.",
       "Do not generate trusted execution metadata, profile or policy versions, provider usage, token counts, pricing, provider IDs, or model IDs.",
       "Do not wrap the result in a Markdown code fence and do not add fields outside the schema.",
+      "The local AnvilNote validator applies stricter structural rules after provider schema validation:",
+      "- Root document or fragment content may contain document blocks, but never listItem, tableRow, tableHeader, or tableCell directly.",
+      "- Every listItem must start with a paragraph. Nested lists, when needed, come only after that paragraph.",
+      "- A table contains tableRow nodes; each row contains tableHeader or tableCell nodes; all rows must resolve to the same non-empty column grid after colspan and rowspan are applied, and a rowspan cannot extend beyond the final row.",
+      "- Text nodes, code-block language values, math LaTeX values, URLs, and other required strings must be non-empty. Use null—not an empty string—for nullable attributes that have no value.",
+      "- Code-block text has no marks. A text node cannot repeat the same mark type.",
       "Use warnings for missing or uncertain source information.",
     ].join("\n"),
   };

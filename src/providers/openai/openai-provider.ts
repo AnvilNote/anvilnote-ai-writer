@@ -87,6 +87,11 @@ export interface SafeOpenAIExecutionLogMetadata {
   inputTokens?: number;
   outputTokens?: number;
   errorCode?: string;
+  providerStatus?: number;
+  providerCode?: string;
+  providerType?: string;
+  providerParam?: string;
+  validationIssuePaths?: string[];
 }
 
 export function toSafeOpenAIExecutionLogMetadata(
@@ -389,6 +394,26 @@ export class OpenAIProviderAdapter implements AIProviderAdapter {
               attempt,
               durationMs: Math.max(0, this.now() - startedAt),
               errorCode: error.code,
+              ...(typeof error.details?.providerStatus === "number"
+                ? { providerStatus: error.details.providerStatus }
+                : {}),
+              ...(typeof error.details?.providerCode === "string"
+                ? { providerCode: error.details.providerCode }
+                : {}),
+              ...(typeof error.details?.providerType === "string"
+                ? { providerType: error.details.providerType }
+                : {}),
+              ...(typeof error.details?.providerParam === "string"
+                ? { providerParam: error.details.providerParam }
+                : {}),
+              ...(Array.isArray(error.details?.validationIssuePaths)
+                ? {
+                    validationIssuePaths:
+                      error.details.validationIssuePaths.filter(
+                        (path): path is string => typeof path === "string",
+                      ),
+                  }
+                : {}),
             }),
           );
           if (attempt >= 2 || !error.retryable || abortContext.signal.aborted) {

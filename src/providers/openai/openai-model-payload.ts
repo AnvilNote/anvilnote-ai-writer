@@ -16,10 +16,6 @@ export type OpenAIComposePayloadV1 = ComposeModelPayloadV1;
 export type OpenAIRewritePayloadV1 = RewriteModelPayloadV1;
 export type OpenAIModelPayloadV1 = WriterModelPayloadV1;
 
-const simpleMarkSchemas = ["bold", "italic", "strike", "code", "underline"].map(
-  (type) => z.object({ type: z.literal(type) }).strict(),
-);
-
 const linkMarkSchema = z
   .object({
     type: z.literal("link"),
@@ -33,12 +29,21 @@ const linkMarkSchema = z
   })
   .strict();
 
-const markSchema = z.union([...simpleMarkSchemas, linkMarkSchema]);
+const providerTextMarksSchema = z
+  .object({
+    bold: z.boolean(),
+    italic: z.boolean(),
+    strike: z.boolean(),
+    code: z.boolean(),
+    underline: z.boolean(),
+    link: linkMarkSchema.nullable(),
+  })
+  .strict();
 const textNodeSchema = z
   .object({
     type: z.literal("text"),
     text: z.string().min(1).max(250_000),
-    marks: z.array(markSchema).max(16).nullable(),
+    marks: providerTextMarksSchema.nullable(),
   })
   .strict();
 const hardBreakNodeSchema = z.object({ type: z.literal("hardBreak") }).strict();
@@ -109,7 +114,17 @@ const codeBlockSchema = z
   .object({
     type: z.literal("codeBlock"),
     attrs: z.object({ language: z.string().min(1).max(128) }).strict(),
-    content: z.array(textNodeSchema).max(1_000),
+    content: z
+      .array(
+        z
+          .object({
+            type: z.literal("text"),
+            text: z.string().min(1).max(250_000),
+            marks: z.null(),
+          })
+          .strict(),
+      )
+      .max(1_000),
   })
   .strict();
 const mathBlockSchema = z
@@ -262,10 +277,70 @@ function removeNullOptionalProperties(value: unknown): unknown {
   if (value === null || typeof value !== "object") {
     return value;
   }
-  return Object.fromEntries(
+  const normalized = Object.fromEntries(
     Object.entries(value)
       .filter(([, nested]) => nested !== null)
       .map(([key, nested]) => [key, removeNullOptionalProperties(nested)]),
+  );
+  if (normalized.type === "text" && Array.isArray(normalized.marks)) {
+    const uniqueMarks: unknown[] = [];
+    const exactMarks = new Set<string>();
+    for (const mark of normalized.marks) {
+      const key = JSON.stringify(mark);
+      if (!exactMarks.has(key)) {
+        exactMarks.add(key);
+        uniqueMarks.push(mark);
+      }
+    }
+    return { ...normalized, marks: uniqueMarks };
+  }
+  return normalized;
+}
+
+function convertProviderMarks(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(convertProviderMarks);
+  if (value === null || typeof value !== "object") return value;
+  const converted = Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [key, convertProviderMarks(nested)]),
+  );
+  if (
+    converted.type !== "text" ||
+    converted.marks === null ||
+    typeof converted.marks !== "object" ||
+    Array.isArray(converted.marks)
+  ) {
+    return converted;
+  }
+  const marksRecord = converted.marks as Record<string, unknown>;
+  const marks = ["bold", "italic", "strike", "code", "underline"]
+    .filter((type) => marksRecord[type] === true)
+    .map((type) => ({ type }));
+  if (marksRecord.link !== null) marks.push(marksRecord.link as { type: string });
+  return { ...converted, marks: marks.length > 0 ? marks : null };
+}
+
+const NULLABLE_IDENTIFIER_KEYS = new Set(["id", "equationNumber", "refName"]);
+
+/**
+ * OpenAI strict Structured Outputs does not support minLength. It can
+ * therefore legally return an empty string for a nullable identifier even
+ * though the domain contract requires a non-empty identifier when present.
+ * Empty optional identifiers carry no information, so normalize only those
+ * allowlisted fields to null before provider-shape validation. Required text,
+ * URLs, code languages, and LaTeX remain fail-closed.
+ */
+function normalizeEmptyNullableIdentifiers(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeEmptyNullableIdentifiers);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [
+      key,
+      NULLABLE_IDENTIFIER_KEYS.has(key) &&
+      typeof nested === "string" &&
+      nested.trim().length === 0
+        ? null
+        : normalizeEmptyNullableIdentifiers(nested),
+    ]),
   );
 }
 
@@ -273,19 +348,20 @@ export function parseOpenAIModelPayload(
   outputSchemaId: OpenAIWriterOutputSchemaId,
   value: unknown,
 ): OpenAIModelPayloadV1 {
+  const normalizedProviderValue = normalizeEmptyNullableIdentifiers(value);
   if (outputSchemaId === "anvilnote.ai.compose-result.v1") {
-    const payload = OpenAIComposePayloadV1Schema.parse(value);
+    const payload = OpenAIComposePayloadV1Schema.parse(normalizedProviderValue);
     return NormalizedOpenAIComposePayloadV1Schema.parse({
       suggestedTitle: payload.suggestedTitle,
-      document: removeNullOptionalProperties(payload.document),
+      document: removeNullOptionalProperties(convertProviderMarks(payload.document)),
       summary: payload.summary,
       warnings: payload.warnings,
     });
   }
 
-  const payload = OpenAIRewritePayloadV1Schema.parse(value);
+  const payload = OpenAIRewritePayloadV1Schema.parse(normalizedProviderValue);
   return NormalizedOpenAIRewritePayloadV1Schema.parse({
-    replacement: removeNullOptionalProperties(payload.replacement),
+    replacement: removeNullOptionalProperties(convertProviderMarks(payload.replacement)),
     changeSummary: payload.changeSummary,
     preservedElements: payload.preservedElements,
     warnings: payload.warnings,
