@@ -8,4 +8,4 @@ export * from "./protected-content";
 export * from "./questions-v1";
 export * from "./schemas";
 export * from "./validators";
-export * from "./v2/capability-manifest";
+export * from "./v2/index";
