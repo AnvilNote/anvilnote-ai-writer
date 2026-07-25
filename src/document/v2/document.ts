@@ -1,5 +1,7 @@
 import { z } from "zod";
 import type { AiCoreBlockV2, AiCoreInlineNodeV2 } from "./core-nodes";
+import type { AiStructuredBlockV2 } from "./structured-nodes";
+import type { AiReferenceInlineNodeV2 } from "./reference-nodes";
 
 // Canonical AI document v2 — the single stable entry point
 // (parseDocumentV2/aiDocumentV2Schema) across Tasks 20.2-20.4. See
@@ -7,15 +9,16 @@ import type { AiCoreBlockV2, AiCoreInlineNodeV2 } from "./core-nodes";
 //
 // AiBlockNodeV2/AiInlineNodeV2 are each a progressive union, extended by
 // later tasks:
-//   - Task 20.2 (this file, initial version): AiBlockNodeV2 = AiCoreBlockV2,
+//   - Task 20.2 (initial version): AiBlockNodeV2 = AiCoreBlockV2,
 //     AiInlineNodeV2 = AiCoreInlineNodeV2.
-//   - Task 20.3 adds AiStructuredBlockV2 (callout/proof/question/table/
-//     footnotes) to AiBlockNodeV2, and AiReferenceInlineNodeV2 (crossRef/
-//     footnoteReference/questionBlank/inlineBlank) to AiInlineNodeV2.
+//   - Task 20.3 (this version) adds AiStructuredBlockV2 (callout/proof/
+//     question/table/footnotes) to AiBlockNodeV2, and AiReferenceInlineNodeV2
+//     (crossRef/footnoteReference/questionBlank/inlineBlank) to
+//     AiInlineNodeV2.
 //   - Task 20.4 adds AiVisualBlockV2 (mermaid/functionPlot/statsChart) to
 //     AiBlockNodeV2.
-export type AiBlockNodeV2 = AiCoreBlockV2;
-export type AiInlineNodeV2 = AiCoreInlineNodeV2;
+export type AiBlockNodeV2 = AiCoreBlockV2 | AiStructuredBlockV2;
+export type AiInlineNodeV2 = AiCoreInlineNodeV2 | AiReferenceInlineNodeV2;
 
 export interface AiDocumentV2 {
   readonly version: 2;
@@ -120,5 +123,232 @@ export const aiDocumentV2Schema: z.ZodType<AiDocumentV2> = z
   .strict() as z.ZodType<AiDocumentV2>;
 
 export function parseDocumentV2(value: unknown): AiDocumentV2 {
-  return aiDocumentV2Schema.parse(value);
+  const parsed = aiDocumentV2Schema.parse(value);
+  return validateDocumentSemanticsV2(parsed);
+}
+
+// --- Cross-node semantic validation (Task 20.3) ------------------------
+//
+// Everything below runs AFTER Zod shape-parsing succeeds, and catches
+// violations a single node's own schema can't see because they depend on
+// where a node sits in the tree (its parent) or on ANOTHER node elsewhere
+// in the document (a crossRef's target, a duplicate localRef). Written in
+// plain TypeScript over the now-fully-typed AiDocumentV2 (not a second
+// round of Zod .superRefine()), walking generically via a minimal
+// structural shape ({ type, attrs?, content? }) rather than a big
+// discriminated switch — every V2 node conforms to that shape, so one
+// walker covers blocks and inlines alike without needing to know every
+// node kind by name.
+interface GenericNodeV2 {
+  readonly type: string;
+  readonly attrs?: Record<string, unknown>;
+  readonly content?: readonly unknown[];
+}
+
+function isGenericNodeV2(value: unknown): value is GenericNodeV2 {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { type?: unknown }).type === "string"
+  );
+}
+
+function forEachChildV2(
+  node: GenericNodeV2,
+  visit: (child: GenericNodeV2, index: number) => void,
+): void {
+  if (!Array.isArray(node.content)) return;
+  node.content.forEach((child, index) => {
+    if (isGenericNodeV2(child)) visit(child, index);
+  });
+}
+
+// Every node kind that can carry a caller-assigned `localRef` attr, and the
+// reference-target "kind" that identifies it to crossRef/footnoteReference/
+// questionBlank. footnote is the only REQUIRED one (every footnote must be
+// referenceable); heading/blockMath/table/questionItem's localRef is
+// optional (only needed if something actually crossRefs it).
+type AiReferenceTargetKindV2 = "footnote" | "heading" | "table" | "blockMath" | "questionItem";
+
+const REFERENCE_TARGET_KIND_BY_TYPE_V2: Readonly<Record<string, AiReferenceTargetKindV2>> = {
+  footnote: "footnote",
+  heading: "heading",
+  table: "table",
+  blockMath: "blockMath",
+  questionItem: "questionItem",
+};
+
+// crossRef may point at any referenceable node EXCEPT a footnote (footnotes
+// have their own dedicated footnoteReference node instead — mirrors the
+// real editor's cross-ref.ts CrossRefTargetIds/tiptap-footnotes split
+// exactly: two disjoint pools, never interchangeable).
+const CROSS_REF_TARGET_KINDS_V2 = new Set<AiReferenceTargetKindV2>([
+  "heading",
+  "table",
+  "blockMath",
+  "questionItem",
+]);
+
+function collectLocalRefsV2(document: AiDocumentV2): Map<string, AiReferenceTargetKindV2> {
+  const refs = new Map<string, AiReferenceTargetKindV2>();
+
+  function visit(node: GenericNodeV2): void {
+    const kind = REFERENCE_TARGET_KIND_BY_TYPE_V2[node.type];
+    const localRef = node.attrs?.localRef;
+    if (kind && typeof localRef === "string" && localRef.length > 0) {
+      if (refs.has(localRef)) {
+        throw new Error(
+          `Duplicate localRef "${localRef}" — local refs must be unique across the whole document.`,
+        );
+      }
+      refs.set(localRef, kind);
+    }
+    forEachChildV2(node, (child) => visit(child));
+  }
+
+  for (const node of document.content) visit(node as GenericNodeV2);
+  return refs;
+}
+
+// Parent-placement rules a single node's own Zod schema can't express
+// (which container it's allowed to sit directly inside). Mirrors V1's
+// validators.ts validateBlockPlacement requiredParent map, adapted to V2's
+// node names (footnote/footnotes are new in V2).
+const REQUIRED_PARENTS_V2: Readonly<Record<string, ReadonlySet<string>>> = {
+  listItem: new Set(["bulletList", "orderedList"]),
+  tableRow: new Set(["table"]),
+  tableHeader: new Set(["tableRow"]),
+  tableCell: new Set(["tableRow"]),
+  question: new Set(["root"]),
+  questionItem: new Set(["question"]),
+  choiceList: new Set(["questionItem"]),
+  choiceItem: new Set(["choiceList"]),
+  footnotes: new Set(["root"]),
+  footnote: new Set(["footnotes"]),
+};
+
+function assertQuestionHierarchyV2(document: AiDocumentV2): void {
+  function walk(node: GenericNodeV2, parent: string, path: string): void {
+    const required = REQUIRED_PARENTS_V2[node.type];
+    if (required && !required.has(parent)) {
+      throw new Error(`${node.type} is not allowed inside ${parent} (at ${path}).`);
+    }
+    forEachChildV2(node, (child, index) => walk(child, node.type, `${path}.content[${index}]`));
+  }
+
+  document.content.forEach((node, index) => {
+    walk(node as GenericNodeV2, "root", `content[${index}]`);
+  });
+
+  // "block+ footnotes?" (see anvilnote-web's extensions.ts AnvilDocument):
+  // at most one footnotes node, and only as the LAST top-level child. The
+  // per-node REQUIRED_PARENTS_V2 check above already confirms footnotes
+  // only ever sits at "root"; this adds the cardinality/position rule that
+  // a single parent-set membership check can't express on its own.
+  const footnotesIndexes = document.content
+    .map((node, index) => ((node as GenericNodeV2).type === "footnotes" ? index : -1))
+    .filter((index) => index >= 0);
+  if (footnotesIndexes.length > 1) {
+    throw new Error("A document may contain at most one footnotes node.");
+  }
+  if (footnotesIndexes.length === 1 && footnotesIndexes[0] !== document.content.length - 1) {
+    throw new Error("footnotes must be the last top-level node in the document.");
+  }
+}
+
+// Table column-geometry check — mirrors V1's validators.ts
+// addTableGeometryIssues algorithm exactly (same occupied-column/rowspan
+// bookkeeping), just walked as a plain assertion over every `table` node
+// found ANYWHERE in the tree (not only top-level), and thrown instead of
+// pushed as a Zod issue.
+function assertTableGeometryV2(table: GenericNodeV2, path: string): void {
+  let expectedWidth: number | null = null;
+  let activeRowspans: number[] = [];
+
+  const rows = Array.isArray(table.content) ? table.content : [];
+  rows.forEach((rowValue, rowIndex) => {
+    if (!isGenericNodeV2(rowValue)) return;
+    const occupied = activeRowspans.map((remaining) => remaining > 0);
+    const nextRowspans = activeRowspans.map((remaining) => Math.max(remaining - 1, 0));
+    let column = 0;
+
+    const cells = Array.isArray(rowValue.content) ? rowValue.content : [];
+    for (const cellValue of cells) {
+      if (!isGenericNodeV2(cellValue)) continue;
+      const colspan = Number(cellValue.attrs?.colspan ?? 1);
+      const rowspan = Number(cellValue.attrs?.rowspan ?? 1);
+      while (occupied[column]) column += 1;
+
+      for (let offset = 0; offset < colspan; offset += 1) {
+        const targetColumn = column + offset;
+        if (occupied[targetColumn]) {
+          throw new Error(`Table cells overlap an active rowspan (at ${path}.content[${rowIndex}]).`);
+        }
+        occupied[targetColumn] = true;
+        if (rowspan > 1) nextRowspans[targetColumn] = rowspan - 1;
+      }
+      column += colspan;
+    }
+
+    const rowWidth = occupied.length;
+    if (expectedWidth === null) {
+      if (rowWidth === 0) {
+        throw new Error(`The first table row must define at least one column (at ${path}.content[${rowIndex}]).`);
+      }
+      expectedWidth = rowWidth;
+    }
+    if (
+      rowWidth !== expectedWidth ||
+      occupied.slice(0, expectedWidth).some((isOccupied) => !isOccupied)
+    ) {
+      throw new Error(
+        `Table rows must resolve to the same complete column grid (at ${path}.content[${rowIndex}]).`,
+      );
+    }
+
+    activeRowspans = nextRowspans.slice(0, expectedWidth);
+  });
+
+  if (activeRowspans.some((remaining) => remaining > 0)) {
+    throw new Error(`A table rowspan extends beyond the final row (at ${path}).`);
+  }
+}
+
+function assertTableHierarchyV2(document: AiDocumentV2): void {
+  function walk(node: GenericNodeV2, path: string): void {
+    if (node.type === "table") assertTableGeometryV2(node, path);
+    forEachChildV2(node, (child, index) => walk(child, `${path}.content[${index}]`));
+  }
+  document.content.forEach((node, index) => walk(node as GenericNodeV2, `content[${index}]`));
+}
+
+function assertReferenceTargetsV2(
+  document: AiDocumentV2,
+  refs: ReadonlyMap<string, AiReferenceTargetKindV2>,
+): void {
+  function checkTarget(node: GenericNodeV2, requiredKinds: ReadonlySet<AiReferenceTargetKindV2>): void {
+    const targetRef = node.attrs?.targetRef;
+    if (typeof targetRef !== "string") return; // shape already enforced by Zod.
+    const kind = refs.get(targetRef);
+    if (!kind || !requiredKinds.has(kind)) {
+      throw new Error(`${node.type} targetRef "${targetRef}" does not resolve to a valid target.`);
+    }
+  }
+
+  function walk(node: GenericNodeV2): void {
+    if (node.type === "crossRef") checkTarget(node, CROSS_REF_TARGET_KINDS_V2);
+    if (node.type === "questionBlank") checkTarget(node, new Set(["questionItem"]));
+    if (node.type === "footnoteReference") checkTarget(node, new Set(["footnote"]));
+    forEachChildV2(node, (child) => walk(child));
+  }
+
+  for (const node of document.content) walk(node as GenericNodeV2);
+}
+
+export function validateDocumentSemanticsV2(document: AiDocumentV2): AiDocumentV2 {
+  const refs = collectLocalRefsV2(document);
+  assertQuestionHierarchyV2(document);
+  assertTableHierarchyV2(document);
+  assertReferenceTargetsV2(document, refs);
+  return document;
 }
