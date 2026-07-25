@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { AiCoreBlockV2, AiCoreInlineNodeV2 } from "./core-nodes";
 import type { AiStructuredBlockV2 } from "./structured-nodes";
 import type { AiReferenceInlineNodeV2 } from "./reference-nodes";
+import type { AiVisualBlockV2 } from "./visual-nodes";
 
 // Canonical AI document v2 — the single stable entry point
 // (parseDocumentV2/aiDocumentV2Schema) across Tasks 20.2-20.4. See
@@ -11,13 +12,12 @@ import type { AiReferenceInlineNodeV2 } from "./reference-nodes";
 // later tasks:
 //   - Task 20.2 (initial version): AiBlockNodeV2 = AiCoreBlockV2,
 //     AiInlineNodeV2 = AiCoreInlineNodeV2.
-//   - Task 20.3 (this version) adds AiStructuredBlockV2 (callout/proof/
-//     question/table/footnotes) to AiBlockNodeV2, and AiReferenceInlineNodeV2
-//     (crossRef/footnoteReference/questionBlank/inlineBlank) to
-//     AiInlineNodeV2.
-//   - Task 20.4 adds AiVisualBlockV2 (mermaid/functionPlot/statsChart) to
-//     AiBlockNodeV2.
-export type AiBlockNodeV2 = AiCoreBlockV2 | AiStructuredBlockV2;
+//   - Task 20.3 added AiStructuredBlockV2 (callout/proof/question/table/
+//     footnotes) to AiBlockNodeV2, and AiReferenceInlineNodeV2 (crossRef/
+//     footnoteReference/questionBlank/inlineBlank) to AiInlineNodeV2.
+//   - Task 20.4 (this version) adds AiVisualBlockV2 (mermaid/functionPlot/
+//     statsChart) to AiBlockNodeV2.
+export type AiBlockNodeV2 = AiCoreBlockV2 | AiStructuredBlockV2 | AiVisualBlockV2;
 export type AiInlineNodeV2 = AiCoreInlineNodeV2 | AiReferenceInlineNodeV2;
 
 export interface AiDocumentV2 {
