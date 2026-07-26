@@ -194,6 +194,13 @@ export interface AnvilNoteHorizontalRuleNodeV1 {
   };
 }
 
+export interface AnvilNotePageBreakNodeV1 {
+  type: "pageBreak";
+  attrs: {
+    weak: boolean;
+  };
+}
+
 export type AnvilNoteBlockNodeV1 =
   | AnvilNoteParagraphNodeV1
   | AnvilNoteHeadingNodeV1
@@ -213,4 +220,5 @@ export type AnvilNoteBlockNodeV1 =
   | AnvilNoteTableRowNodeV1
   | AnvilNoteTableHeaderNodeV1
   | AnvilNoteTableCellNodeV1
-  | AnvilNoteHorizontalRuleNodeV1;
+  | AnvilNoteHorizontalRuleNodeV1
+  | AnvilNotePageBreakNodeV1;

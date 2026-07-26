@@ -55,6 +55,7 @@ function childBlocks(node: AnvilNoteBlockNodeV1): AnvilNoteBlockNodeV1[] {
     case "codeBlock":
     case "mathBlock":
     case "horizontalRule":
+    case "pageBreak":
       return [];
   }
 }

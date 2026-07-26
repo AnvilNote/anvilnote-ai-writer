@@ -60,7 +60,7 @@ import { sanitizeOpenAIStrictSchema, validateOpenAIStrictSchema } from "./openai
 // and letting every container hold every OTHER container recursively would
 // still make the deepest single definition too deep. So node "content"
 // arrays are organized into a small, fixed tier system instead:
-//   - ATOMIC block nodes (paragraph/heading/horizontalRule/blockMath/
+//   - ATOMIC block nodes (paragraph/heading/horizontalRule/pageBreak/blockMath/
 //     codeBlock/mermaid/functionPlot/statsChart) never contain another
 //     block node.
 //   - "listItem" contains only ATOMIC blocks; bulletList/orderedList
@@ -204,6 +204,13 @@ const horizontalRuleWireSchema = z
   })
   .strict()
   .meta({ id: "node-horizontal-rule" });
+const pageBreakWireSchema = z
+  .object({
+    type: z.literal("pageBreak"),
+    attrs: z.object({ weak: z.boolean() }).strict(),
+  })
+  .strict()
+  .meta({ id: "node-page-break" });
 const blockMathWireSchema = z
   .object({
     type: z.literal("blockMath"),
@@ -399,6 +406,7 @@ const atomicBlockWireSchema = z
     paragraphWireSchema,
     headingWireSchema,
     horizontalRuleWireSchema,
+    pageBreakWireSchema,
     blockMathWireSchema,
     codeBlockWireSchema,
     mermaidWireSchema,
@@ -579,6 +587,7 @@ const blockNodeWireSchema = z
     paragraphWireSchema,
     headingWireSchema,
     horizontalRuleWireSchema,
+    pageBreakWireSchema,
     blockMathWireSchema,
     codeBlockWireSchema,
     mermaidWireSchema,
@@ -626,6 +635,9 @@ const blockMathPatchAttrsWireSchema = z
   .strict();
 const horizontalRulePatchAttrsWireSchema = z
   .object({ thicknessPt: z.number().nullable(), lineStyle: dividerLineStyleWireSchema.nullable() })
+  .strict();
+const pageBreakPatchAttrsWireSchema = z
+  .object({ weak: z.boolean().nullable() })
   .strict();
 const inlineMathPatchAttrsWireSchema = z.object({ latex: z.string().nullable() }).strict();
 const calloutPatchAttrsWireSchema = z
@@ -809,6 +821,7 @@ const updateAttrsOpWireSchemas = [
   updateAttrsVariantWireSchema("codeBlock", codeBlockPatchAttrsWireSchema),
   updateAttrsVariantWireSchema("blockMath", blockMathPatchAttrsWireSchema),
   updateAttrsVariantWireSchema("horizontalRule", horizontalRulePatchAttrsWireSchema),
+  updateAttrsVariantWireSchema("pageBreak", pageBreakPatchAttrsWireSchema),
   updateAttrsVariantWireSchema("inlineMath", inlineMathPatchAttrsWireSchema),
   updateAttrsVariantWireSchema("callout", calloutPatchAttrsWireSchema),
   updateAttrsVariantWireSchema("questionItem", questionItemPatchAttrsWireSchema),

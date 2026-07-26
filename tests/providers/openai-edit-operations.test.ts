@@ -21,8 +21,10 @@ import type { AIWriterRequest } from "../../src/contracts/index";
 test("wire schema is a strict, flat, image/svg-free object schema", () => {
   assert.equal(OPENAI_EDIT_OPERATIONS_SCHEMA.additionalProperties, false);
   assert.deepEqual(OPENAI_EDIT_OPERATIONS_SCHEMA.required, ["version", "operations"]);
-  assert.equal(JSON.stringify(OPENAI_EDIT_OPERATIONS_SCHEMA).includes('"svg"'), false);
-  assert.equal(JSON.stringify(OPENAI_EDIT_OPERATIONS_SCHEMA).includes('"image"'), false);
+  const serializedSchema = JSON.stringify(OPENAI_EDIT_OPERATIONS_SCHEMA);
+  assert.equal(serializedSchema.includes('"svg"'), false);
+  assert.equal(serializedSchema.includes('"image"'), false);
+  assert.equal(serializedSchema.includes('"pageBreak"'), true);
 });
 
 test("wire schema satisfies the OpenAI strict Structured Outputs budget", () => {
@@ -161,6 +163,7 @@ test("covers every V2 editable node type through insertNode wire payloads", () =
   const codeBlock = { type: "codeBlock", attrs: { language: "ts" }, content: [{ type: "text", text: "let x = 1;", marks: null }] };
   const heading = { type: "heading", attrs: { level: 1, localRef: null }, content: [wireText("Title")] };
   const horizontalRule = { type: "horizontalRule", attrs: null };
+  const pageBreak = { type: "pageBreak", attrs: { weak: true } };
   const blockMath = { type: "blockMath", attrs: { latex: "x^2", refName: null, localRef: null } };
   const mermaid = { type: "mermaid", attrs: { source: "graph TD; A-->B;", theme: "default", primaryColor: null, width: null } };
   const functionPlot = {
@@ -227,6 +230,7 @@ test("covers every V2 editable node type through insertNode wire payloads", () =
     richParagraph,
     heading,
     horizontalRule,
+    pageBreak,
     blockMath,
     codeBlock,
     mermaid,

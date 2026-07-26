@@ -94,9 +94,11 @@ test("accepts one of every core node/mark type", () => {
       { type: "blockMath", attrs: { latex: "E = mc^2" } },
       { type: "horizontalRule", attrs: { thicknessPt: 1.5, lineStyle: "dashed" } },
       { type: "horizontalRule" },
+      { type: "pageBreak", attrs: { weak: false } },
+      { type: "pageBreak", attrs: { weak: true } },
     ]),
   );
-  assert.equal(document.content.length, 8);
+  assert.equal(document.content.length, 10);
 });
 
 test("rejects unknown attrs on core nodes", () => {

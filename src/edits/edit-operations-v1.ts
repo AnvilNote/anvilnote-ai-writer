@@ -16,6 +16,7 @@ import type {
   AiCodeBlockNodeV2,
   AiBlockMathNodeV2,
   AiHorizontalRuleNodeV2,
+  AiPageBreakNodeV2,
   AiInlineMathNodeV2,
 } from "../document/v2/core-nodes";
 import { structuredBlockSchemasV2 } from "../document/v2/structured-nodes";
@@ -101,6 +102,10 @@ export type AiNodeAttrsPatchV2 =
   | {
       readonly nodeType: "horizontalRule";
       readonly attrs: Partial<NonNullable<AiHorizontalRuleNodeV2["attrs"]>>;
+    }
+  | {
+      readonly nodeType: "pageBreak";
+      readonly attrs: Partial<AiPageBreakNodeV2["attrs"]>;
     }
   | { readonly nodeType: "inlineMath"; readonly attrs: Partial<AiInlineMathNodeV2["attrs"]> }
   | { readonly nodeType: "callout"; readonly attrs: Partial<AiCalloutNodeV2["attrs"]> }
@@ -232,6 +237,7 @@ const SIMPLE_ATTRS_PATCH_NODE_TYPES = [
   "codeBlock",
   "blockMath",
   "horizontalRule",
+  "pageBreak",
   "inlineMath",
   "callout",
   "questionItem",

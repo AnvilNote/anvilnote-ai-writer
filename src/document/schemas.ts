@@ -391,6 +391,17 @@ const horizontalRuleSchema = z
   })
   .strict();
 
+const pageBreakSchema = z
+  .object({
+    type: z.literal("pageBreak"),
+    attrs: z
+      .object({
+        weak: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict();
+
 blockNodeSchema = z.discriminatedUnion("type", [
   paragraphSchema,
   headingSchema,
@@ -411,6 +422,7 @@ blockNodeSchema = z.discriminatedUnion("type", [
   tableHeaderSchema,
   tableCellSchema,
   horizontalRuleSchema,
+  pageBreakSchema,
 ]) as z.ZodType<AnvilNoteBlockNodeV1>;
 
 export const AnvilNoteBlockNodeV1Schema: z.ZodType<AnvilNoteBlockNodeV1> =

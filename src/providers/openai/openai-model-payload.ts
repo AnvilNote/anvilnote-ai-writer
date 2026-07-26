@@ -296,6 +296,12 @@ const horizontalRuleSchema = z
       .nullable(),
   })
   .strict();
+const pageBreakSchema = z
+  .object({
+    type: z.literal("pageBreak"),
+    attrs: z.object({ weak: z.boolean() }).strict(),
+  })
+  .strict();
 
 blockNodeSchema = z.discriminatedUnion("type", [
   paragraphSchema,
@@ -314,6 +320,7 @@ blockNodeSchema = z.discriminatedUnion("type", [
   tableHeaderSchema,
   tableCellSchema,
   horizontalRuleSchema,
+  pageBreakSchema,
 ]);
 
 const providerDocumentSchema = z

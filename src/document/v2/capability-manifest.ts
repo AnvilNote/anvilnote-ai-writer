@@ -72,6 +72,7 @@ export const AI_NODE_CAPABILITIES: Readonly<Record<string, AiNodeCapability>> =
     hardBreak: "editable",
     blockquote: "editable",
     horizontalRule: "editable",
+    pageBreak: "editable",
     codeBlock: "editable",
     callout: "editable",
     proof: "editable",

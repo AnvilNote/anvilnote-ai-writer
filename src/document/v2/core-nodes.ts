@@ -123,6 +123,13 @@ export interface AiHorizontalRuleNodeV2 {
   };
 }
 
+export interface AiPageBreakNodeV2 {
+  readonly type: "pageBreak";
+  readonly attrs: {
+    readonly weak: boolean;
+  };
+}
+
 export type AiCoreBlockV2 =
   | AiParagraphNodeV2
   | AiHeadingNodeV2
@@ -132,7 +139,8 @@ export type AiCoreBlockV2 =
   | AiBlockquoteNodeV2
   | AiCodeBlockNodeV2
   | AiBlockMathNodeV2
-  | AiHorizontalRuleNodeV2;
+  | AiHorizontalRuleNodeV2
+  | AiPageBreakNodeV2;
 
 const textNodeSchema = z
   .object({
@@ -289,6 +297,17 @@ const horizontalRuleSchema = z
   })
   .strict();
 
+const pageBreakSchema = z
+  .object({
+    type: z.literal("pageBreak"),
+    attrs: z
+      .object({
+        weak: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict();
+
 export const coreBlockSchemasV2 = [
   paragraphSchema,
   headingSchema,
@@ -299,6 +318,7 @@ export const coreBlockSchemasV2 = [
   codeBlockSchema,
   blockMathSchema,
   horizontalRuleSchema,
+  pageBreakSchema,
 ] as const;
 
 registerInlineSchemasV2(coreInlineSchemasV2);
