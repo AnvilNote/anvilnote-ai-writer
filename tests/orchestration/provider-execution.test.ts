@@ -2,12 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import type { AIWriterRequest } from "../../src/contracts/index";
-import type { AIProviderExecutionResult } from "../../src/server/index";
+import type {
+  AIProviderExecutionResult,
+  PreparedWriterRequest,
+} from "../../src/server/index";
+import {
+  applyEditOperations,
+  buildEditSnapshot,
+  buildProviderEditSnapshot,
+  parseEditOperationsV1,
+} from "../../src/edits/index";
 import {
   AIProviderRegistry,
   AIWriterError,
   OpenAIProviderAdapter,
   assembleTrustedWriterResult,
+  buildEditOperationsPromptSections,
   executeWriterRequest,
   prepareWriterRequest,
 } from "../../src/server/index";
@@ -175,4 +185,137 @@ test("trusted orchestration normalizes malformed adapter output", async () => {
       error.code === "invalid_structured_output" &&
       !JSON.stringify(error).includes(secret),
   );
+});
+
+test("a fake provider can edit the full mixed document with text and structural operations", async () => {
+  const document = {
+    type: "doc" as const,
+    content: [
+      {
+        type: "paragraph",
+        content: [
+          {
+            type: "text",
+            text: "短",
+            marks: [{ type: "textStyle", attrs: { color: "#336699" } }],
+          },
+          ...Array.from({ length: 6 }, () => ({ type: "inlineBlank" })),
+          { type: "footnoteReference", attrs: { targetRef: "fn-1" } },
+          { type: "text", text: "與" },
+          { type: "footnoteReference", attrs: { targetRef: "fn-2" } },
+        ],
+      },
+      {
+        type: "mermaid",
+        attrs: { source: "graph TD; A-->B", theme: "default" },
+      },
+      {
+        type: "paragraph",
+        content: [{ type: "text", text: "尾段" }],
+      },
+      {
+        type: "footnotes",
+        content: [
+          {
+            type: "footnote",
+            attrs: { localRef: "fn-1" },
+            content: [{ type: "paragraph", content: [{ type: "text", text: "註腳一" }] }],
+          },
+          {
+            type: "footnote",
+            attrs: { localRef: "fn-2" },
+            content: [{ type: "paragraph", content: [{ type: "text", text: "註腳二" }] }],
+          },
+        ],
+      },
+    ],
+  };
+  const snapshot = buildEditSnapshot({ document });
+  const textRef = [...snapshot.nodeRefs.entries()].find(([, path]) =>
+    path.join(".") === "0.0"
+  )?.[0];
+  assert.ok(textRef);
+
+  const providerSnapshot = buildProviderEditSnapshot(snapshot);
+  const sections = buildEditOperationsPromptSections({
+    requestId: "req-full-mixed",
+    instruction: "變長",
+    scope: "document",
+    snapshot: providerSnapshot,
+  });
+  const prepared: PreparedWriterRequest = {
+    requestId: "req-full-mixed",
+    provider: { id: "openai", model: "gpt-5.6-terra" },
+    profile: { id: "edit-operations", version: 1 },
+    promptTemplate: { id: "prompt.edit-structures.v2", version: 1 },
+    policyVersions: [],
+    outputSchemaId: "anvilnote.ai.edit-operations.v1",
+    sections,
+    maxOutputTokens: 16_384,
+    metadata: {
+      locale: "zh-TW",
+      writingStyle: "auto",
+      resolvedWritingStyle: "neutral",
+      humanizerEnabled: false,
+      humanizerLanguageFallback: false,
+      attachmentCount: 0,
+      conversationMessageCount: 0,
+      selectedContentPresent: false,
+    },
+  };
+  const fakeProvider = {
+    definition: new OpenAIProviderAdapter().definition,
+    testConnection: async () => ({
+      status: "success" as const,
+      provider: "openai",
+      model: "gpt-5.6-terra",
+      messageKey: "ai.connection.success",
+    }),
+    execute: async (): Promise<AIProviderExecutionResult> => ({
+      provider: "openai",
+      model: "gpt-5.6-terra",
+      providerRequestId: "fake-full-mixed",
+      payload: {
+        version: "anvilnote.ai.edit-operations.v1",
+        operations: [
+          { type: "replaceText", targetRef: textRef, text: "這是一段變長的文字", marks: [] },
+          {
+            type: "insertNode",
+            parentRef: "n0",
+            index: 3,
+            node: {
+              type: "paragraph",
+              content: [{ type: "text", text: "新增的結構段落" }],
+            },
+          },
+        ],
+      },
+      usage: {
+        provider: "openai",
+        model: "gpt-5.6-terra",
+        inputTokens: 100,
+        outputTokens: 50,
+        totalTokens: 150,
+        estimatedActualCostUsd: 0,
+        pricingVersion: "fake",
+      },
+      durationMs: 1,
+      attempts: 1,
+    }),
+  };
+
+  const execution = await new AIProviderRegistry([fakeProvider])
+    .get("openai")!
+    .execute(prepared, { apiKey: "fake-key" });
+  const draft = applyEditOperations(snapshot, parseEditOperationsV1(execution.payload));
+  const editedParagraph = draft.candidateDocument.content[0] as {
+    content?: Array<{ text?: string }>;
+  };
+  const insertedParagraph = draft.candidateDocument.content[3] as {
+    content?: Array<{ text?: string }>;
+  };
+
+  assert.equal(editedParagraph.content?.[0]?.text, "這是一段變長的文字");
+  assert.equal(insertedParagraph.content?.[0]?.text, "新增的結構段落");
+  assert.equal(draft.candidateDocument.content[4]?.type, "footnotes");
 });
