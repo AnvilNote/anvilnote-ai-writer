@@ -6,6 +6,21 @@ import {
   type OpenAIWriterOutputSchemaId,
 } from "./openai-model-payload";
 
+// NOTE: getOpenAIModelPayloadFormat below does NOT statically import
+// openai-edit-operations-schema.ts, even though that module is the third
+// arm of OpenAIWriterOutputSchemaId — openai-edit-operations-schema.ts
+// itself imports `validateOpenAIStrictSchema` FROM this file (to reuse the
+// real budget-check logic rather than forking it), so importing it back
+// here would create a circular module dependency (verified empirically:
+// it throws "Cannot access 'OMITTED_SDK_SCHEMA_KEYWORDS' before
+// initialization" at runtime, a real TDZ failure, not a hypothetical one).
+// build-openai-request.ts — the ONLY caller of this function — instead
+// imports openai-edit-operations-schema.ts's precomputed format directly
+// and branches on the edit-operations id BEFORE ever calling this
+// function, so this function is only ever invoked for the original two
+// ids. See build-openai-request.ts's own comment for the other half of
+// this judgment call.
+
 const SUPPORTED_STRICT_KEYWORDS = new Set([
   "$defs",
   "$ref",
@@ -151,6 +166,18 @@ export function validateOpenAIStrictSchema(
 export function getOpenAIModelPayloadFormat(
   outputSchemaId: OpenAIWriterOutputSchemaId,
 ): ResponseFormatTextJSONSchemaConfig {
+  // anvilnote.ai.edit-operations.v1 is handled entirely by
+  // build-openai-request.ts BEFORE this function is ever called (see the
+  // comment above the imports for why: avoiding a circular module
+  // dependency with openai-edit-operations-schema.ts). Fail loudly rather
+  // than silently falling through to the rewrite branch below if that
+  // invariant is ever violated.
+  if (outputSchemaId === "anvilnote.ai.edit-operations.v1") {
+    throw new Error(
+      "getOpenAIModelPayloadFormat does not handle anvilnote.ai.edit-operations.v1 directly — callers must use openai-edit-operations-schema.ts's precomputed format instead.",
+    );
+  }
+
   const generated =
     outputSchemaId === "anvilnote.ai.compose-result.v1"
       ? zodTextFormat(

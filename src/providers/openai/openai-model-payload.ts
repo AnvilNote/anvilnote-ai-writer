@@ -15,7 +15,9 @@ import type {
 } from "../../orchestration/model-payload";
 
 export type OpenAIWriterOutputSchemaId =
-  "anvilnote.ai.compose-result.v1" | "anvilnote.ai.rewrite-result.v1";
+  | "anvilnote.ai.compose-result.v1"
+  | "anvilnote.ai.rewrite-result.v1"
+  | "anvilnote.ai.edit-operations.v1";
 
 export type OpenAIComposePayloadV1 = ComposeModelPayloadV1;
 export type OpenAIRewritePayloadV1 = RewriteModelPayloadV1;

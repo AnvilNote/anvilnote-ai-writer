@@ -10,6 +10,8 @@ export * from "../providers/provider-adapter";
 export * from "../providers/provider-registry";
 export * from "../providers/openai/build-openai-request";
 export * from "../providers/openai/openai-connection-test";
+export * from "../providers/openai/openai-edit-operations-normalizer";
+export * from "../providers/openai/openai-edit-operations-schema";
 export * from "../providers/openai/openai-errors";
 export * from "../providers/openai/openai-model-payload";
 export * from "../providers/openai/openai-provider";
