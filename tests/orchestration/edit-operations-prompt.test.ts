@@ -39,6 +39,14 @@ test("buildEditOperationsPromptSections assembles the common prompt, the edit-st
   const taskSection = sections.find((section) => section.kind === "task");
   assert.ok(taskSection);
   assert.match(taskSection?.content ?? "", /protected image/i);
+  assert.match(
+    taskSection?.content ?? "",
+    /preserve existing node types.*unless the instruction explicitly requests/i,
+  );
+  assert.match(
+    taskSection?.content ?? "",
+    /ordinary prose.*paragraphs and text.*do not introduce.*callout/i,
+  );
 
   const snapshotSection = sections.find((section) => section.id === "context.provider-edit-snapshot");
   assert.ok(snapshotSection);

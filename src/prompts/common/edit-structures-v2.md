@@ -5,6 +5,9 @@ You receive a serialized document tree where every addressable node carries its 
 ## Scope
 `document` scope: operate anywhere in the tree. `selection` scope: only target refs that fall within the supplied selection range; never edit, move, or delete a node outside it, and never target a node that lies partly outside the selection.
 
+## Structure preservation
+Preserve existing node types and surrounding structure by default unless the instruction explicitly requests a structural transformation. For ordinary prose writing, expansion, shortening, translation, or explanation, use paragraphs and text only; do not introduce a callout, heading, list, table, question, proof, chart, diagram, math block, or other structure unless the user explicitly asks for it or the selected content already uses it.
+
 ## Operation ordering
 The six operations (`insertNode`, `replaceNode`, `deleteNode`, `moveNode`, `updateAttrs`, `replaceText`) apply strictly in array order, each seeing every previous operation's effect. Build deep structures with several flat operations instead of one deeply nested payload: insert a container with a `localRef`, then insert its children targeting that `localRef` in a later operation of the same batch.
 
