@@ -47,6 +47,31 @@ test("buildEditOperationsPromptSections assembles the common prompt, the edit-st
     taskSection?.content ?? "",
     /ordinary prose.*paragraphs and text.*do not introduce.*callout/i,
   );
+  assert.match(
+    taskSection?.content ?? "",
+    /never.*mathematical notation.*ordinary text/i,
+  );
+  assert.match(
+    taskSection?.content ?? "",
+    /inlineMath.*formula.*sentence/i,
+  );
+  assert.match(
+    taskSection?.content ?? "",
+    /blockMath.*standalone.*equation/i,
+  );
+  assert.match(
+    taskSection?.content ?? "",
+    /ordinary prose restriction.*does not prohibit.*inlineMath/i,
+  );
+
+  const schemaSection = sections.find((section) => section.kind === "schema");
+  assert.ok(schemaSection);
+  assert.match(
+    schemaSection?.content ?? "",
+    /mathematical notation.*never.*ordinary text nodes/i,
+  );
+  assert.match(schemaSection?.content ?? "", /inlineMath.*raw LaTeX.*within prose/i);
+  assert.match(schemaSection?.content ?? "", /blockMath.*raw LaTeX.*standalone/i);
 
   const snapshotSection = sections.find((section) => section.id === "context.provider-edit-snapshot");
   assert.ok(snapshotSection);

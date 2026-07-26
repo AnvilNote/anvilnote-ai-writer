@@ -20,6 +20,13 @@ test("prompt.edit-structures.v2 is registered and documents every editable V2 no
   }
   assert.match(editStructuresPrompt, /never edit.*image/i);
   assert.match(editStructuresPrompt, /do not return.*svg/i);
+  assert.match(editStructuresPrompt, /never.*mathematical notation.*ordinary text/i);
+  assert.match(editStructuresPrompt, /inlineMath.*formula.*sentence/i);
+  assert.match(editStructuresPrompt, /blockMath.*standalone.*equation/i);
+  assert.match(
+    editStructuresPrompt,
+    /ordinary prose restriction.*does not prohibit.*inlineMath/i,
+  );
 });
 
 test("prompt.edit-structures.v2 never documents protected-image node types as editable targets", () => {
