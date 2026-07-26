@@ -31,6 +31,14 @@ export const PROMPT_TEMPLATES = [
     description:
       "Rewrite a selected document fragment without changing its meaning.",
   },
+  {
+    id: "prompt.edit-structures.v2",
+    version: 1,
+    intent: "common",
+    assetPath: "prompts/common/edit-structures-v2.md",
+    description:
+      "Teach the AI every native AnvilNote v2 node/mark shape, operation semantics, and protected-image rules for full-structure edit requests.",
+  },
 ] as const satisfies readonly PromptTemplateDefinition[];
 
 export function getPromptTemplate(

@@ -49,7 +49,7 @@ const selection = {
 };
 
 test("registries expose unique, versioned, cross-referenced definitions", () => {
-  assert.equal(PROMPT_TEMPLATES.length, 4);
+  assert.equal(PROMPT_TEMPLATES.length, 5);
   assert.equal(WRITING_PROFILES.length, 3);
   assert.ok(WRITING_POLICIES.length >= 6);
 
