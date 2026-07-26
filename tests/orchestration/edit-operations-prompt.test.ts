@@ -72,6 +72,10 @@ test("buildEditOperationsPromptSections assembles the common prompt, the edit-st
   );
   assert.match(schemaSection?.content ?? "", /inlineMath.*raw LaTeX.*within prose/i);
   assert.match(schemaSection?.content ?? "", /blockMath.*raw LaTeX.*standalone/i);
+  assert.match(
+    schemaSection?.content ?? "",
+    /math node.*only.*formula.*natural-language.*text node/i,
+  );
 
   const snapshotSection = sections.find((section) => section.id === "context.provider-edit-snapshot");
   assert.ok(snapshotSection);

@@ -240,7 +240,7 @@ function makeEditOperationsSchemaSection(): PreparedPromptSection {
       "Return only an operations array of insertNode/replaceNode/deleteNode/moveNode/updateAttrs/replaceText entries — no other top-level fields, no prose, no Markdown code fence around the JSON.",
       "Do not generate trusted execution metadata: no usage, provider, model, pricing, profile, prompt, or policy version fields.",
       "Do not invent a stable id for any node. Do not author resolvedKind, resolvedValue, broken, or any svg field — those are derived by the trusted client, never model input.",
-      "Mathematical notation must never remain in ordinary text nodes: emit inlineMath with raw LaTeX for formulas within prose and blockMath with raw LaTeX for standalone equations. This requirement also applies to ordinary explanations and does not require the user to explicitly request mathematical formatting.",
+      "Mathematical notation must never remain in ordinary text nodes: emit inlineMath with raw LaTeX for formulas within prose and blockMath with raw LaTeX for standalone equations. A math node contains only the formula; surrounding natural-language prose and punctuation must remain separate text nodes. Never put Chinese or other natural-language sentences in attrs.latex. This requirement also applies to ordinary explanations and does not require the user to explicitly request mathematical formatting.",
       "The local apply engine re-validates every operation and the whole resulting document after this schema check; a structurally valid but semantically inconsistent batch (e.g. a targetRef that does not resolve, or an updateAttrs nodeType that does not match the node it targets) is rejected in full.",
     ].join("\n"),
   };

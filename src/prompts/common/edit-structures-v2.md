@@ -18,7 +18,7 @@ Always include the target's real `nodeType` alongside `targetRef` — it must ma
 `doc` is the document root; its own `ref` is a valid `parentRef` for appending a new top-level child. `text` carries `text` and optional `marks`. `hardBreak` is a bare line break. `inlineMath` holds one inline LaTeX formula (`attrs.latex`); `blockMath` is the block form, optionally carrying `refName`/`localRef` for citation.
 
 ## Math
-Ordinary prose restriction does not prohibit `inlineMath`. Never put mathematical notation in ordinary text: use `inlineMath` raw LaTeX for formulas within sentences and `blockMath` raw LaTeX for standalone equations. Never use Unicode/plain-text math or math delimiters.
+Ordinary prose restriction does not prohibit `inlineMath`. Never put mathematical notation in ordinary text: use `inlineMath` raw LaTeX for formulas within sentences and `blockMath` raw LaTeX for standalone equations. Math nodes contain only the formula; surrounding natural language stays text. Never use Unicode/plain-text math or math delimiters.
 
 ## Core blocks
 `paragraph` holds inline content. `heading` (`attrs.level` 1-3, optional `localRef`) holds inline content. `bulletList`/`orderedList` (`orderedList.attrs.start` optional) each hold `listItem` children; every `listItem` should start with a `paragraph`. `blockquote` (optional `attrs.author`/`source`) holds block content — use it only for quoted source material. `codeBlock` (`attrs.language`) holds unmarked text only. `horizontalRule` is a bare divider.

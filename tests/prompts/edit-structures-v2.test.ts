@@ -23,6 +23,7 @@ test("prompt.edit-structures.v2 is registered and documents every editable V2 no
   assert.match(editStructuresPrompt, /never.*mathematical notation.*ordinary text/i);
   assert.match(editStructuresPrompt, /inlineMath.*formula.*sentence/i);
   assert.match(editStructuresPrompt, /blockMath.*standalone.*equation/i);
+  assert.match(editStructuresPrompt, /math nodes.*only.*formula.*natural language.*text/i);
   assert.match(
     editStructuresPrompt,
     /ordinary prose restriction.*does not prohibit.*inlineMath/i,
