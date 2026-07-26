@@ -219,12 +219,13 @@ const ALL_NODE_SCHEMAS_V2: readonly z.ZodTypeAny[] = [
 
 // Every editable v2 node type that carries a plain-object `attrs` shape a
 // model could patch a subset of. Nodes with no `attrs` field at all
-// (paragraph/text/bulletList/listItem/choiceList/choiceItem/footnotes/
+// (text/bulletList/listItem/choiceList/choiceItem/footnotes/
 // question/proof/hardBreak/inlineBlank) have nothing to patch and are
 // deliberately absent — updateAttrs only ever targets a node kind that
 // actually declares attrs. statsChart is handled separately below (its
 // attrs is a chartType-discriminated union, not a plain object).
 const SIMPLE_ATTRS_PATCH_NODE_TYPES = [
+  "paragraph",
   "heading",
   "orderedList",
   "blockquote",

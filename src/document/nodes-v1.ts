@@ -27,6 +27,9 @@ export type AnvilNoteInlineNodeV1 =
 
 export interface AnvilNoteParagraphNodeV1 {
   type: "paragraph";
+  attrs?: {
+    indent: number;
+  };
   content: AnvilNoteInlineNodeV1[];
 }
 

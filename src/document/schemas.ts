@@ -96,6 +96,12 @@ const blockReference = z.lazy(() => blockNodeSchema);
 const paragraphSchema = z
   .object({
     type: z.literal("paragraph"),
+    attrs: z
+      .object({
+        indent: z.number().int().min(0).max(8),
+      })
+      .strict()
+      .optional(),
     content: z.array(AnvilNoteInlineNodeV1Schema).max(10_000),
   })
   .strict();

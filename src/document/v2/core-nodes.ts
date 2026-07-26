@@ -39,6 +39,9 @@ export type AiCoreInlineNodeV2 =
 
 export interface AiParagraphNodeV2 {
   readonly type: "paragraph";
+  readonly attrs?: {
+    readonly indent: number;
+  };
   readonly content: readonly AiCoreInlineNodeV2[];
 }
 
@@ -167,6 +170,12 @@ export const coreInlineSchemasV2 = [
 const paragraphSchema = z
   .object({
     type: z.literal("paragraph"),
+    attrs: z
+      .object({
+        indent: z.number().int().min(0).max(8),
+      })
+      .strict()
+      .optional(),
     content: z.array(inlineNodeV2Reference).max(10_000),
   })
   .strict();

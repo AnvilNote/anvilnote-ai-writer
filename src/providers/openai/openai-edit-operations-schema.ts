@@ -169,7 +169,15 @@ const inlineNodeWireSchema = z
 // --- Tier 0: ATOMIC blocks — never contain another block node ------------
 
 const paragraphWireSchema = z
-  .object({ type: z.literal("paragraph"), content: z.array(inlineNodeWireSchema) })
+  .object({
+    type: z.literal("paragraph"),
+    attrs: z
+      .object({ indent: z.number().nullable() })
+      .strict()
+      .nullable()
+      .meta({ id: "paragraph-attrs" }),
+    content: z.array(inlineNodeWireSchema),
+  })
   .strict()
   .meta({ id: "node-paragraph" });
 const headingLevelWireSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
@@ -607,6 +615,7 @@ const anyNodeWireSchema = z.union([blockNodeWireSchema, inlineNodeWireSchema]).m
 const headingPatchAttrsWireSchema = z
   .object({ level: headingLevelWireSchema.nullable(), localRef: z.string().nullable() })
   .strict();
+const paragraphPatchAttrsWireSchema = z.object({ indent: z.number().nullable() }).strict();
 const orderedListPatchAttrsWireSchema = z.object({ start: z.number().nullable() }).strict();
 const blockquotePatchAttrsWireSchema = z
   .object({ author: z.string().nullable(), source: z.string().nullable() })
@@ -793,6 +802,7 @@ function updateAttrsVariantWireSchema<NodeType extends string>(
 }
 
 const updateAttrsOpWireSchemas = [
+  updateAttrsVariantWireSchema("paragraph", paragraphPatchAttrsWireSchema),
   updateAttrsVariantWireSchema("heading", headingPatchAttrsWireSchema),
   updateAttrsVariantWireSchema("orderedList", orderedListPatchAttrsWireSchema),
   updateAttrsVariantWireSchema("blockquote", blockquotePatchAttrsWireSchema),

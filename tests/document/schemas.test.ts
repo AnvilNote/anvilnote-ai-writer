@@ -21,6 +21,7 @@ const validDocument = {
     },
     {
       type: "paragraph",
+      attrs: { indent: 2 },
       content: [
         { type: "text", text: "Read " },
         {

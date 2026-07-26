@@ -48,6 +48,7 @@ test("accepts one of every core node/mark type", () => {
       },
       {
         type: "paragraph",
+        attrs: { indent: 2 },
         content: [
           { type: "text", text: "Hello ", marks: [{ type: "strike" }] },
           {

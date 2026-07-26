@@ -65,7 +65,11 @@ function insertOp(node: unknown, opts?: { parentRef?: string; index?: number; lo
 }
 
 const wireText = (text: string, marks: unknown[] | null = null) => ({ type: "text", text, marks });
-const wireParagraph = (text: string) => ({ type: "paragraph", content: [wireText(text)] });
+const wireParagraph = (text: string) => ({
+  type: "paragraph",
+  attrs: null,
+  content: [wireText(text)],
+});
 
 // --- Recursively collects every `type` literal found anywhere in a value,
 // used to prove the full node-type universe round-trips through the wire
@@ -114,6 +118,43 @@ test("covers all six edit operations end to end", () => {
   if (update?.type !== "updateAttrs") throw new Error("expected updateAttrs");
   assert.equal(update.nodeType, "heading");
   assert.deepEqual(update.attrs, { level: 2 });
+});
+
+test("normalizes paragraph indentation in inserted nodes and attribute updates", () => {
+  const result = normalizeOpenAiEditOperations(
+    envelope([
+      insertOp({
+        type: "paragraph",
+        attrs: { indent: 2 },
+        content: [wireText("Indented")],
+      }),
+      {
+        type: "updateAttrs",
+        targetRef: "n1",
+        nodeType: "paragraph",
+        attrs: { indent: 3 },
+      },
+    ]),
+  );
+
+  assert.deepEqual(result.operations, [
+    {
+      type: "insertNode",
+      parentRef: "n0",
+      index: 0,
+      node: {
+        type: "paragraph",
+        attrs: { indent: 2 },
+        content: [{ type: "text", text: "Indented" }],
+      },
+    },
+    {
+      type: "updateAttrs",
+      targetRef: "n1",
+      nodeType: "paragraph",
+      attrs: { indent: 3 },
+    },
+  ]);
 });
 
 test("covers every V2 editable node type through insertNode wire payloads", () => {
@@ -170,6 +211,7 @@ test("covers every V2 editable node type through insertNode wire payloads", () =
 
   const richParagraph = {
     type: "paragraph",
+    attrs: { indent: 2 },
     content: [
       wireText("Rich "),
       { type: "hardBreak" },
@@ -280,7 +322,7 @@ test("rejects a nodeType/targetRef mismatch normalized shape from updateAttrs", 
         {
           type: "updateAttrs",
           targetRef: "n1",
-          nodeType: "paragraph",
+          nodeType: "doc",
           attrs: {},
         },
       ]),
