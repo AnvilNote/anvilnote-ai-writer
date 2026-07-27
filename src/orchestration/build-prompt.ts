@@ -10,10 +10,12 @@ import {
   loadWritingPolicy,
 } from "../prompts/index";
 import type { WritingProfileDefinition } from "../profiles/index";
+import type { ProviderEditSnapshotV1 } from "../edits/provider-edit-snapshot";
 import type { PreparedPromptSection } from "./prepare-writer-request";
 import { wrapUntrustedPromptData } from "./prompt-boundaries";
 
 const COMMON_PROMPT_ID = "prompt.common.system.v1";
+const EDIT_STRUCTURES_PROMPT_ID = "prompt.edit-structures.v2";
 
 function makeSchemaSection(): PreparedPromptSection {
   return {
@@ -202,6 +204,100 @@ export function buildPromptSections({
       label: "user-instruction",
       kind: "INSTRUCTION",
       content: request.instruction,
+    }),
+  });
+
+  return sections;
+}
+
+// --- V2 full-structure edit requests -------------------------------------
+//
+// Deliberately NOT a modification of buildPromptSections above (which is
+// keyed off AIWriterRequest/WritingProfileDefinition/intent — the
+// compose/rewrite-only pipeline) and deliberately NOT threaded through
+// prepareWriterRequest/AIWriterRequestSchema/the profile registry at all —
+// see this task's own report for the scope boundary. A full-structure edit
+// request is not modeled as a new AIWriterIntent/profile in this pass; the
+// real caller (anvilnote-api, a different repo, Phase 23) constructs its
+// own PreparedWriterRequest-shaped object directly, with
+// outputSchemaId: "anvilnote.ai.edit-operations.v1" and `sections` built by
+// calling this function — nothing here parses or validates a request
+// contract, it only assembles prompt sections from already-trusted inputs.
+export interface EditOperationsPromptInput {
+  readonly requestId: string;
+  readonly instruction: string;
+  readonly scope: "selection" | "document";
+  readonly snapshot: ProviderEditSnapshotV1;
+}
+
+function makeEditOperationsSchemaSection(): PreparedPromptSection {
+  return {
+    id: "edit-operations.output-contract",
+    role: "developer",
+    kind: "schema",
+    content: [
+      "Follow the strict provider-supplied edit-operations schema exactly.",
+      "Return only an operations array of insertNode/replaceNode/deleteNode/moveNode/updateAttrs/replaceText entries — no other top-level fields, no prose, no Markdown code fence around the JSON.",
+      "Do not generate trusted execution metadata: no usage, provider, model, pricing, profile, prompt, or policy version fields.",
+      "Do not invent a stable id for any node. Do not author resolvedKind, resolvedValue, broken, or any svg field — those are derived by the trusted client, never model input.",
+      "Mathematical notation must never remain in ordinary text nodes: emit inlineMath with raw LaTeX for formulas within prose and blockMath with raw LaTeX for standalone equations. A math node contains only the formula; surrounding natural-language prose and punctuation must remain separate text nodes. Never put Chinese or other natural-language sentences in attrs.latex. This requirement also applies to ordinary explanations and does not require the user to explicitly request mathematical formatting.",
+      "The local apply engine re-validates every operation and the whole resulting document after this schema check; a structurally valid but semantically inconsistent batch (e.g. a targetRef that does not resolve, or an updateAttrs nodeType that does not match the node it targets) is rejected in full.",
+    ].join("\n"),
+  };
+}
+
+export function buildEditOperationsPromptSections({
+  requestId,
+  instruction,
+  scope,
+  snapshot,
+}: EditOperationsPromptInput): PreparedPromptSection[] {
+  const commonPrompt = getPromptTemplate(COMMON_PROMPT_ID);
+  const editStructuresPrompt = getPromptTemplate(EDIT_STRUCTURES_PROMPT_ID);
+  if (!commonPrompt || !editStructuresPrompt) {
+    throw new Error("Edit-operations prompt configuration is incomplete.");
+  }
+
+  const sections: PreparedPromptSection[] = [
+    makeTrustedSection(commonPrompt.id, "common", loadPromptTemplate(commonPrompt.id)),
+    makeTrustedSection(editStructuresPrompt.id, "task", loadPromptTemplate(editStructuresPrompt.id)),
+    makeEditOperationsSchemaSection(),
+  ];
+
+  sections.push({
+    id: "context.edit-scope",
+    role: "user",
+    kind: "context",
+    content: wrapUntrustedPromptData({
+      requestId,
+      label: "edit-scope",
+      kind: "CONTEXT",
+      content: JSON.stringify({ scope }),
+    }),
+  });
+
+  sections.push({
+    id: "context.provider-edit-snapshot",
+    role: "user",
+    kind: "context",
+    content: wrapUntrustedPromptData({
+      requestId,
+      label: "current-document",
+      kind: "CURRENT_DOCUMENT",
+      metadata: { version: snapshot.version },
+      content: JSON.stringify(snapshot.document),
+    }),
+  });
+
+  sections.push({
+    id: "user.instruction",
+    role: "user",
+    kind: "instruction",
+    content: wrapUntrustedPromptData({
+      requestId,
+      label: "user-instruction",
+      kind: "INSTRUCTION",
+      content: instruction,
     }),
   });
 

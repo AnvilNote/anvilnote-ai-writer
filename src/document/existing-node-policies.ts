@@ -27,6 +27,7 @@ const ROUND_TRIP_NODE_NAMES = new Set([
   "tableHeader",
   "tableCell",
   "horizontalRule",
+  "pageBreak",
   "text",
   "hardBreak",
   "inlineMath",

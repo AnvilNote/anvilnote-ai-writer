@@ -96,6 +96,12 @@ const blockReference = z.lazy(() => blockNodeSchema);
 const paragraphSchema = z
   .object({
     type: z.literal("paragraph"),
+    attrs: z
+      .object({
+        indent: z.number().int().min(0).max(8),
+      })
+      .strict()
+      .optional(),
     content: z.array(AnvilNoteInlineNodeV1Schema).max(10_000),
   })
   .strict();
@@ -385,6 +391,17 @@ const horizontalRuleSchema = z
   })
   .strict();
 
+const pageBreakSchema = z
+  .object({
+    type: z.literal("pageBreak"),
+    attrs: z
+      .object({
+        weak: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict();
+
 blockNodeSchema = z.discriminatedUnion("type", [
   paragraphSchema,
   headingSchema,
@@ -405,6 +422,7 @@ blockNodeSchema = z.discriminatedUnion("type", [
   tableHeaderSchema,
   tableCellSchema,
   horizontalRuleSchema,
+  pageBreakSchema,
 ]) as z.ZodType<AnvilNoteBlockNodeV1>;
 
 export const AnvilNoteBlockNodeV1Schema: z.ZodType<AnvilNoteBlockNodeV1> =

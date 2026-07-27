@@ -15,7 +15,9 @@ import type {
 } from "../../orchestration/model-payload";
 
 export type OpenAIWriterOutputSchemaId =
-  "anvilnote.ai.compose-result.v1" | "anvilnote.ai.rewrite-result.v1";
+  | "anvilnote.ai.compose-result.v1"
+  | "anvilnote.ai.rewrite-result.v1"
+  | "anvilnote.ai.edit-operations.v1";
 
 export type OpenAIComposePayloadV1 = ComposeModelPayloadV1;
 export type OpenAIRewritePayloadV1 = RewriteModelPayloadV1;
@@ -294,6 +296,12 @@ const horizontalRuleSchema = z
       .nullable(),
   })
   .strict();
+const pageBreakSchema = z
+  .object({
+    type: z.literal("pageBreak"),
+    attrs: z.object({ weak: z.boolean() }).strict(),
+  })
+  .strict();
 
 blockNodeSchema = z.discriminatedUnion("type", [
   paragraphSchema,
@@ -312,6 +320,7 @@ blockNodeSchema = z.discriminatedUnion("type", [
   tableHeaderSchema,
   tableCellSchema,
   horizontalRuleSchema,
+  pageBreakSchema,
 ]);
 
 const providerDocumentSchema = z

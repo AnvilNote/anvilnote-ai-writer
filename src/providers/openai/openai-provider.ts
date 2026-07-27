@@ -39,6 +39,7 @@ import {
   type SafeOpenAITextMarksShapeCounts,
   validateNormalizedOpenAIModelPayload,
 } from "./openai-model-payload";
+import { normalizeOpenAiEditOperations } from "./openai-edit-operations-normalizer";
 import { normalizeOpenAIUsage } from "./openai-usage";
 
 export const AI_TIMEOUTS = {
@@ -285,6 +286,29 @@ function parseCompletedPayload(
     );
   }
   try {
+    // anvilnote.ai.edit-operations.v1 is a genuinely different result
+    // shape from compose/rewrite (AiEditOperationsResultV1, not
+    // ComposeModelPayloadV1/RewriteModelPayloadV1) — it is parsed through
+    // its OWN normalizer (normalizeOpenAiEditOperations, which itself calls
+    // the real parseEditOperationsV1 from Task 21.1), not
+    // parseOpenAIModelPayloadWithNormalization (which only ever knows about
+    // the other two ids). The provider layer's job here stops at "produce
+    // a valid AiEditOperationsResultV1" — real semantic verification
+    // against an actual document happens later, in applyEditOperations
+    // (Task 21.3), which this package already exports but which is
+    // deliberately NOT invoked from inside the provider adapter.
+    if (request.outputSchemaId === "anvilnote.ai.edit-operations.v1") {
+      const payload = normalizeOpenAiEditOperations(response.output_parsed);
+      const rawOutputTextMarksShapeCounts =
+        getSafeRawOutputTextMarksShapeCounts(response);
+      return {
+        payload,
+        normalizedMissingMarksCount: 0,
+        ...(rawOutputTextMarksShapeCounts
+          ? { rawOutputTextMarksShapeCounts }
+          : {}),
+      };
+    }
     if (
       request.outputSchemaId !== "anvilnote.ai.compose-result.v1" &&
       request.outputSchemaId !== "anvilnote.ai.rewrite-result.v1"
@@ -436,7 +460,21 @@ export class OpenAIProviderAdapter implements AIProviderAdapter {
           }
           const parsedPayload = parseCompletedPayload(response, request);
           let payload = parsedPayload.payload;
-          if (options.protectedContentRegistry) {
+          // Protected-CONTENT placeholders (ProtectedContentRegistry) are a
+          // V1, compose/rewrite-only mechanism (selected-text formulas/
+          // code/URLs swapped for opaque tokens before the prompt is built)
+          // — a structurally different concept from V2's protected-IMAGE
+          // mechanism (edit-snapshot.ts's protectedImage placeholders,
+          // Task 21.2), which has no text-placeholder restoration step at
+          // the provider layer at all. Skip this branch entirely for
+          // edit-operations requests: there is nothing for it to restore,
+          // and running it would be meaningless work against a result
+          // shape (AiEditOperationsResultV1) this registry was never
+          // designed to understand.
+          if (
+            options.protectedContentRegistry &&
+            request.outputSchemaId !== "anvilnote.ai.edit-operations.v1"
+          ) {
             const restored =
               options.protectedContentRegistry.validateAndRestoreStructured(
                 payload,
